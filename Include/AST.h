@@ -39,6 +39,16 @@ namespace ZCompiler {
         std::vector<ExprPtr> args;
     };
 
+    struct IdentExpr : Expr {
+        std::string name;
+    };
+
+    struct BinaryExpr : Expr {
+        std::string op;
+        ExprPtr lhs;
+        ExprPtr rhs;
+    };
+
     // Statements
     struct ExprStmt : Stmt {
         ExprPtr expr;
@@ -50,6 +60,17 @@ namespace ZCompiler {
 
     struct BlockStmt : Stmt {
         std::vector<StmtPtr> stmts;
+    };
+
+    struct LetStmt : Stmt {
+        std::string name;
+        TypeRef type = TypeRef::Int;
+        ExprPtr init;
+    };
+
+    struct AssignStmt : Stmt {
+        std::string name;
+        ExprPtr value;
     };
 
     // Declarations

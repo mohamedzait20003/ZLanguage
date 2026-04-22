@@ -1,29 +1,27 @@
-#include "CodeGen.h"
 #include "Lexer.h"
 #include "Parser.h"
+#include "CodeGen.h"
 
-#include <llvm/IR/LegacyPassManager.h>
-#include <llvm/IR/Verifier.h>
-#include <llvm/MC/TargetRegistry.h>
-#include <llvm/Support/CodeGen.h>
-#include <llvm/Support/FileSystem.h>
-#include <llvm/Support/TargetSelect.h>
-#include <llvm/Support/raw_ostream.h>
-#include <llvm/Target/TargetMachine.h>
-#include <llvm/Target/TargetOptions.h>
-#include <llvm/TargetParser/Host.h>
-#include <llvm/TargetParser/Triple.h>
-
+#include <string>
 #include <cstdlib>
 #include <fstream>
-#include <iostream>
 #include <sstream>
+#include <iostream>
 #include <stdexcept>
-#include <string>
 
-// ---------------------------------------------------------------------------
-// --dump-ast helpers
-// ---------------------------------------------------------------------------
+#include <llvm/IR/Verifier.h>
+#include <llvm/Support/CodeGen.h>
+#include <llvm/TargetParser/Host.h>
+#include <llvm/MC/TargetRegistry.h>
+#include <llvm/Support/FileSystem.h>
+#include <llvm/Support/raw_ostream.h>
+#include <llvm/TargetParser/Triple.h>
+#include <llvm/IR/LegacyPassManager.h>
+#include <llvm/Support/TargetSelect.h>
+#include <llvm/Target/TargetMachine.h>
+#include <llvm/Target/TargetOptions.h>
+
+
 static std::string indent(int n) { return std::string(n * 2, ' '); }
 
 static void dumpExpr(const ZCompiler::Expr& expr, int d) {
@@ -31,12 +29,27 @@ static void dumpExpr(const ZCompiler::Expr& expr, int d) {
         std::cout << indent(d) << "IntLitExpr(" << lit->value << ")\n";
         return;
     }
+
     if (auto* call = dynamic_cast<const ZCompiler::CallExpr*>(&expr)) {
         std::cout << indent(d) << "CallExpr(callee=" << call->callee << ")\n";
         for (const auto& arg : call->args)
             dumpExpr(*arg, d + 1);
+
         return;
     }
+
+    if (auto* id = dynamic_cast<const ZCompiler::IdentExpr*>(&expr)) {
+        std::cout << indent(d) << "IdentExpr(" << id->name << ")\n";
+        return;
+    }
+
+    if (auto* bin = dynamic_cast<const ZCompiler::BinaryExpr*>(&expr)) {
+        std::cout << indent(d) << "BinaryExpr(" << bin->op << ")\n";
+        dumpExpr(*bin->lhs, d + 1);
+        dumpExpr(*bin->rhs, d + 1);
+        return;
+    }
+
     std::cout << indent(d) << "UnknownExpr\n";
 }
 
@@ -46,11 +59,25 @@ static void dumpStmt(const ZCompiler::Stmt& stmt, int d) {
         dumpExpr(*ret->value, d + 1);
         return;
     }
+
     if (auto* es = dynamic_cast<const ZCompiler::ExprStmt*>(&stmt)) {
         std::cout << indent(d) << "ExprStmt\n";
         dumpExpr(*es->expr, d + 1);
         return;
     }
+
+    if (auto* let = dynamic_cast<const ZCompiler::LetStmt*>(&stmt)) {
+        std::cout << indent(d) << "LetStmt(name=" << let->name << ")\n";
+        dumpExpr(*let->init, d + 1);
+        return;
+    }
+
+    if (auto* asgn = dynamic_cast<const ZCompiler::AssignStmt*>(&stmt)) {
+        std::cout << indent(d) << "AssignStmt(" << asgn->name << ")\n";
+        dumpExpr(*asgn->value, d + 1);
+        return;
+    }
+
     std::cout << indent(d) << "UnknownStmt\n";
 }
 
@@ -75,11 +102,17 @@ int main(int argc, char* argv[]) {
 
     for (int i = 1; i < argc; ++i) {
         std::string arg = argv[i];
-        if      (arg == "--dump-tokens") dumpTokens = true;
-        else if (arg == "--dump-ast")    dumpAst    = true;
-        else if (arg == "--emit-llvm")   emitLlvm   = true;
-        else if (arg == "-o" && i + 1 < argc) outputFile = argv[++i];
-        else inputFile = arg;
+
+        if (arg == "--dump-tokens") 
+            dumpTokens = true;
+        else if (arg == "--dump-ast")    
+            dumpAst    = true;
+        else if (arg == "--emit-llvm")   
+            emitLlvm   = true;
+        else if (arg == "-o" && i + 1 < argc) 
+            outputFile = argv[++i];
+        else 
+            inputFile = arg;
     }
 
     if (inputFile.empty()) {

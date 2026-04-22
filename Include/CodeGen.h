@@ -4,6 +4,7 @@
 
 #include <memory>
 #include <string>
+#include <unordered_map>
 #include <llvm/IR/Module.h>
 #include <llvm/IR/IRBuilder.h>
 #include <llvm/IR/LLVMContext.h>
@@ -22,6 +23,8 @@ namespace ZCompiler {
             std::unique_ptr<llvm::Module> module_;
 
             llvm::IRBuilder<> builder_;
+            std::unordered_map<std::string, llvm::AllocaInst*> symbols_;
+            
             llvm::Function* printf_ = nullptr;
             llvm::Value* genExpr(const Expr& expr);
 

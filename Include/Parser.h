@@ -29,11 +29,16 @@ namespace ZCompiler {
             DeclPtr parseFnDecl();
 
             StmtPtr parseStmt();
+            StmtPtr parseLetStmt();
             StmtPtr parseExprStmt();
             StmtPtr parseReturnStmt();
+            StmtPtr parseAssignStmt();
 
             ExprPtr parseExpr();
             ExprPtr parseIntLit();
+            ExprPtr parseAddExpr();
+            ExprPtr parseMulExpr();
+            ExprPtr parsePrimaryExpr();
             ExprPtr parseCallorIdent();
     };
 }

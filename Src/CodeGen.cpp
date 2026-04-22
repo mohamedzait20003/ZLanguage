@@ -15,6 +15,11 @@ namespace ZCompiler {
         return std::move(module_);
     }
 
+    static llvm::AllocaInst* createEntryBlockAlloca(llvm::Function* fn, const std::string& name, llvm::Type* ty) {
+        llvm::IRBuilder<> tmp(&fn->getEntryBlock(), fn->getEntryBlock().begin());
+        return tmp.CreateAlloca(ty, nullptr, name);
+    }
+
     void CodeGen::declarePrintf() {
         llvm::Type* i8ptr = llvm::PointerType::get(llvm::Type::getInt8Ty(ctx_), 0);
         llvm::FunctionType* ft = llvm::FunctionType::get(
@@ -35,6 +40,8 @@ namespace ZCompiler {
     }
 
     void CodeGen::genFnDecl(const FnDecl& fn) {
+        symbols_.clear();
+
         llvm::FunctionType* ft = llvm::FunctionType::get(
             llvm::Type::getInt32Ty(ctx_), {}, false
         );
@@ -67,6 +74,26 @@ namespace ZCompiler {
             return;
         }
 
+        if (auto* let = dynamic_cast<const LetStmt*>(&stmt)) {
+            llvm::Function* fn = builder_.GetInsertBlock()->getParent();
+            llvm::AllocaInst* alloca = createEntryBlockAlloca(fn, let->name, llvm::Type::getInt64Ty(ctx_));
+            symbols_[let->name] = alloca;
+
+            llvm::Value* initVal = genExpr(*let->init);
+            builder_.CreateStore(initVal, alloca);
+            return;
+        }
+
+        if (auto* asgn = dynamic_cast<const AssignStmt*>(&stmt)) {
+            auto it = symbols_.find(asgn->name);
+            if (it == symbols_.end())
+                throw std::runtime_error("assignment to undeclared variable '" + asgn->name + "'");
+
+            llvm::Value* val = genExpr(*asgn->value);
+            builder_.CreateStore(val, it->second);
+            return;
+        }
+
         throw std::runtime_error("codegen: unknown statement type");
     }
 
@@ -88,6 +115,26 @@ namespace ZCompiler {
             }
 
             throw std::runtime_error("codegen: unknown function '" + call->callee + "'");
+        }
+
+        if (auto* id = dynamic_cast<const IdentExpr*>(&expr)) {
+            auto it = symbols_.find(id->name);
+            if (it == symbols_.end())
+                throw std::runtime_error("use of undeclared variable '" + id->name + "'");
+
+            return builder_.CreateLoad(llvm::Type::getInt64Ty(ctx_), it->second, id->name);
+        }
+
+        if (auto* bin = dynamic_cast<const BinaryExpr*>(&expr)) {
+            llvm::Value* lhs = genExpr(*bin->lhs);
+            llvm::Value* rhs = genExpr(*bin->rhs);
+
+            if (bin->op == "+")
+                return builder_.CreateAdd(lhs, rhs, "addtmp");
+            if (bin->op == "*")
+                return builder_.CreateMul(lhs, rhs, "multmp");
+
+            throw std::runtime_error("codegen: unknown binary operator '" + bin->op + "'");
         }
 
         throw std::runtime_error("codegen: unknown expression type");

@@ -10,6 +10,7 @@ namespace ZCompiler {
 
         Fn,
         Int,
+        Let,
         Return,
 
         LParen,
@@ -18,8 +19,16 @@ namespace ZCompiler {
         RBrace,
         Arrow,
         Comma,
+
+        Eq,
+        Plus,
+        Minus,
+        Star,
+        Slash,
+        Percent,
         
         NewLine,
+        Colon,
         Eof,
     };
 

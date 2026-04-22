@@ -64,6 +64,8 @@ namespace ZCompiler {
             type = TokenType::Fn;
         else if(lexeme == "int")
             type = TokenType::Int;
+        else if(lexeme == "let")
+            type = TokenType::Let;
         else if(lexeme == "return")
             type = TokenType::Return;
 
@@ -95,15 +97,24 @@ namespace ZCompiler {
                 return makeToken(TokenType::RBrace, "}", startLine, startColumn);
             case ',':
                 return makeToken(TokenType::Comma, ",", startLine, startColumn);
+            case ':':
+                return makeToken(TokenType::Colon, ":", startLine, startColumn);
+            case '=':
+                return makeToken(TokenType::Eq, "=", startLine, startColumn);
+            case '+':
+                return makeToken(TokenType::Plus, "+", startLine, startColumn);
             case '-':
                 if (match('>')) {
                     return makeToken(TokenType::Arrow, "->", startLine, startColumn);
                 }
 
-                throw std::runtime_error(
-                    "lex error: unexpected '-' at line " + std::to_string(startLine) +
-                    ", column " + std::to_string(startColumn)
-                );
+                return makeToken(TokenType::Minus, "-", startLine, startColumn);
+            case '*':
+                return makeToken(TokenType::Star, "*", startLine, startColumn);
+            case '/':
+                return makeToken(TokenType::Slash, "/", startLine, startColumn);
+            case '%':
+                return makeToken(TokenType::Percent, "%", startLine, startColumn);
             default:
                 throw std::runtime_error(
                     std::string("lex error: unknown character '") + c +
@@ -171,10 +182,26 @@ namespace ZCompiler {
                 return "Arrow";
             case TokenType::Comma:
                 return "Comma";
+            case TokenType::Colon:
+                return "Colon";
             case TokenType::NewLine:     
                 return "NewLine";
             case TokenType::Eof:         
                 return "Eof";
+            case TokenType::Let:
+                return "Let";
+            case TokenType::Eq:
+                return "Eq";
+            case TokenType::Plus:
+                return "Plus";
+            case TokenType::Minus:
+                return "Minus";
+            case TokenType::Star:
+                return "Star";
+            case TokenType::Slash:
+                return "Slash";
+            case TokenType::Percent:
+                return "Percent";
         }
         return "<unknown>";
     }
