@@ -49,6 +49,11 @@ namespace ZCompiler {
         ExprPtr rhs;
     };
 
+    struct UnaryExpr : Expr {
+        std::string op;
+        ExprPtr operand;
+    };
+
     // Statements
     struct ExprStmt : Stmt {
         ExprPtr expr;
@@ -71,6 +76,40 @@ namespace ZCompiler {
     struct AssignStmt : Stmt {
         std::string name;
         ExprPtr value;
+    };
+
+    struct IfStmt : Stmt {
+        ExprPtr cond;
+        std::unique_ptr<BlockStmt> thenBranch;
+        std::unique_ptr<BlockStmt> elseBranch;
+    };
+
+    struct CaseArm : Node {
+        ExprPtr value;
+        std::unique_ptr<BlockStmt> body;
+    };
+
+    struct SwitchStmt : Stmt {
+        ExprPtr scrutinee;
+        std::vector<CaseArm> cases;
+        std::unique_ptr<BlockStmt> defaultArm;
+    };
+
+    struct WhileStmt : Stmt {
+        ExprPtr cond;
+        std::unique_ptr<BlockStmt> body;
+    };
+
+    struct ForStmt : Stmt {
+        StmtPtr init;
+        ExprPtr cond;
+        StmtPtr step;
+        std::unique_ptr<BlockStmt> body;
+    };
+
+    struct DoStmt : Stmt {
+        ExprPtr cond;
+        std::unique_ptr<BlockStmt> body;
     };
 
     // Declarations

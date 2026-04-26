@@ -58,14 +58,32 @@ namespace ZCompiler {
         }
 
         std::string lexeme(source_.substr(start, pos_ - start));
-
         TokenType type = TokenType::Identifier;
+
         if(lexeme == "fn")
             type = TokenType::Fn;
         else if(lexeme == "int")
             type = TokenType::Int;
         else if(lexeme == "let")
             type = TokenType::Let;
+        else if(lexeme == "if")
+            type = TokenType::If;
+        else if(lexeme == "switch")
+            type = TokenType::Switch;
+        else if(lexeme == "case")
+            type = TokenType::Case;
+        else if(lexeme == "default")
+            type = TokenType::Default;
+        else if(lexeme == "for")
+            type = TokenType::For;
+        else if(lexeme == "else")
+            type = TokenType::Else;
+        else if(lexeme == "while")
+            type = TokenType::While;
+        else if (lexeme == "do")
+            type = TokenType::Do;
+        else if (lexeme == "along")
+            type = TokenType::Along;
         else if(lexeme == "return")
             type = TokenType::Return;
 
@@ -97,17 +115,21 @@ namespace ZCompiler {
                 return makeToken(TokenType::RBrace, "}", startLine, startColumn);
             case ',':
                 return makeToken(TokenType::Comma, ",", startLine, startColumn);
+            case ';':
+                return makeToken(TokenType::Semicolon, ";", startLine, startColumn);
             case ':':
                 return makeToken(TokenType::Colon, ":", startLine, startColumn);
             case '=':
+                if (match('='))
+                    return makeToken(TokenType::EqEq, "==", startLine, startColumn);
+
                 return makeToken(TokenType::Eq, "=", startLine, startColumn);
             case '+':
                 return makeToken(TokenType::Plus, "+", startLine, startColumn);
             case '-':
-                if (match('>')) {
+                if (match('>'))
                     return makeToken(TokenType::Arrow, "->", startLine, startColumn);
-                }
-
+                    
                 return makeToken(TokenType::Minus, "-", startLine, startColumn);
             case '*':
                 return makeToken(TokenType::Star, "*", startLine, startColumn);
@@ -115,6 +137,37 @@ namespace ZCompiler {
                 return makeToken(TokenType::Slash, "/", startLine, startColumn);
             case '%':
                 return makeToken(TokenType::Percent, "%", startLine, startColumn);
+            case '<':
+                if (match('='))
+                    return makeToken(TokenType::LessEq, "<=", startLine, startColumn);
+                    
+                return makeToken(TokenType::Less, "<", startLine, startColumn);
+            case '>':
+                if (match('='))
+                    return makeToken(TokenType::GreaterEq, ">=", startLine, startColumn);
+
+                return makeToken(TokenType::Greater, ">", startLine, startColumn);
+            case '!':
+                if (match('='))
+                    return makeToken(TokenType::NotEq, "!=", startLine, startColumn);
+
+                return makeToken(TokenType::Not, "!", startLine, startColumn);
+            case '&':
+                if (match('&'))
+                    return makeToken(TokenType::And, "&&", startLine, startColumn);
+
+                throw std::runtime_error(
+                    std::string("lex error: unexpected '&' (did you mean '&&'?) at line ") +
+                    std::to_string(startLine) + ", column " + std::to_string(startColumn)
+                );
+            case '|':
+                if (match('|'))
+                    return makeToken(TokenType::Or, "||", startLine, startColumn);
+
+                throw std::runtime_error(
+                    std::string("lex error: unexpected '|' (did you mean '||'?) at line ") +
+                    std::to_string(startLine) + ", column " + std::to_string(startColumn)
+                );
             default:
                 throw std::runtime_error(
                     std::string("lex error: unknown character '") + c +
@@ -148,6 +201,12 @@ namespace ZCompiler {
 
             if(std::isdigit(static_cast<unsigned char>(c))) {
                 tokens.push_back(scanNumber(startLine, startColumn));
+                continue;
+            }
+
+            if (c == '#') {
+                while (!isAtEnd() && peek() != '\n')
+                    advance();
                 continue;
             }
 
@@ -202,6 +261,44 @@ namespace ZCompiler {
                 return "Slash";
             case TokenType::Percent:
                 return "Percent";
+            case TokenType::EqEq:
+                return "EqEq";
+            case TokenType::NotEq:
+                return "NotEq";
+            case TokenType::Less:
+                return "Less";
+            case TokenType::LessEq:
+                return "LessEq";
+            case TokenType::Greater:
+                return "Greater";
+            case TokenType::GreaterEq:
+                return "GreaterEq";
+            case TokenType::And:
+                return "And";
+            case TokenType::Or:
+                return "Or";
+            case TokenType::Not:
+                return "Not";
+            case TokenType::If:
+                return "If";
+            case TokenType::Else:
+                return "Else";
+            case TokenType::While:
+                return "While";
+            case TokenType::For:
+                return "For";
+            case TokenType::Switch:
+                return "Switch";
+            case TokenType::Case:
+                return "Case";
+            case TokenType::Default:
+                return "Default";
+            case TokenType::Semicolon:
+                return "Semicolon";
+            case TokenType::Do:
+                return "Do";
+            case TokenType::Along:
+                return "Along";
         }
         return "<unknown>";
     }

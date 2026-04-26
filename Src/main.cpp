@@ -13,6 +13,7 @@
 #include <llvm/Support/CodeGen.h>
 #include <llvm/TargetParser/Host.h>
 #include <llvm/MC/TargetRegistry.h>
+#include <llvm/Passes/PassBuilder.h>
 #include <llvm/Support/FileSystem.h>
 #include <llvm/Support/raw_ostream.h>
 #include <llvm/TargetParser/Triple.h>
@@ -185,6 +186,20 @@ int main(int argc, char* argv[]) {
             targetTriple, "generic", "", opt, std::nullopt
         );
         module->setDataLayout(tm->createDataLayout());
+
+        // O2 optimisation pipeline
+        llvm::PassBuilder pb(tm);
+        llvm::LoopAnalysisManager     lam;
+        llvm::FunctionAnalysisManager fam;
+        llvm::CGSCCAnalysisManager    cgam;
+        llvm::ModuleAnalysisManager   mam;
+
+        pb.registerModuleAnalyses(mam);
+        pb.registerCGSCCAnalyses(cgam);
+        pb.registerFunctionAnalyses(fam);
+        pb.registerLoopAnalyses(lam);
+        pb.crossRegisterProxies(lam, fam, cgam, mam);
+        pb.buildPerModuleDefaultPipeline(llvm::OptimizationLevel::O2).run(*module, mam);
 
         std::string objFile = outputFile + ".o";
         std::error_code ec;

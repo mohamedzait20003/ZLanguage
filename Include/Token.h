@@ -26,8 +26,31 @@ namespace ZCompiler {
         Star,
         Slash,
         Percent,
+
+        EqEq,
+        NotEq,
+        Less,
+        LessEq,
+        Greater,
+        GreaterEq,
+
+        And,
+        Or,
+        Not,
+
+        If,
+        Else,
+        Switch,
+        Case,
+        Default,
+
+        For,
+        While,
+        Do,
+        Along,
         
         NewLine,
+        Semicolon,
         Colon,
         Eof,
     };

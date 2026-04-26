@@ -101,6 +101,15 @@ namespace ZCompiler {
         decl->name = expect(TokenType::Identifier, "expected function name").lexeme;
 
         expect(TokenType::LParen, "expected '(' after function name");
+        while (!check(TokenType::RParen) && !check(TokenType::Eof)) {
+            Param p;
+            p.name = expect(TokenType::Identifier, "expected parameter name").lexeme;
+            expect(TokenType::Colon, "expected ':' after parameter name");
+            p.type = parseTypeRef();
+            decl->params.push_back(std::move(p));
+            if (!check(TokenType::RParen))
+                expect(TokenType::Comma, "expected ',' between parameters");
+        }
         expect(TokenType::RParen, "expected ')' after parameter list");
         expect(TokenType::Arrow, "expected '->' after parameter list");
 
@@ -115,17 +124,29 @@ namespace ZCompiler {
     StmtPtr Parser::parseStmt() {
         skipNewlines();
 
-        if (check(TokenType::Return)) {
+        if (check(TokenType::Return))
             return parseReturnStmt();
-        }
 
-        if (check(TokenType::Let)) {
+        if (check(TokenType::Let))
             return parseLetStmt();
-        }
 
-        if (check(TokenType::Identifier) && tokens_[pos_ + 1].type == TokenType::Eq) {
+        if (check(TokenType::If))
+            return parseIfStmt();
+
+        if (check(TokenType::While))
+            return parseWhileStmt();
+
+        if (check(TokenType::Do))
+            return parseDoStmt();
+
+        if (check(TokenType::Switch))
+            return parseSwitchStmt();
+        
+        if (check(TokenType::For))
+            return parseForStmt();
+
+        if (check(TokenType::Identifier) && tokens_[pos_ + 1].type == TokenType::Eq)
             return parseAssignStmt();
-        }
 
         return parseExprStmt();
     }
@@ -154,7 +175,6 @@ namespace ZCompiler {
 
     StmtPtr Parser::parseExprStmt() {
         auto expr = parseExpr();
-
         auto stmt = std::make_unique<ExprStmt>();
 
         stmt->line = expr->line;
@@ -170,7 +190,7 @@ namespace ZCompiler {
 
     StmtPtr Parser::parseReturnStmt() {
         const Token& ret = expect(TokenType::Return, "expected 'return' keyword");
-
+        
         auto stmt = std::make_unique<ReturnStmt>();
 
         stmt->line = ret.line;
@@ -187,19 +207,233 @@ namespace ZCompiler {
     StmtPtr Parser::parseAssignStmt() {
         std::string name = expect(TokenType::Identifier, "expected variable name").lexeme;
         expect(TokenType::Eq, "expected '=' after variable name");
-
+    
         ExprPtr value = parseExpr();
         if (check(TokenType::NewLine))
             advance();
-
+    
         auto stmt = std::make_unique<AssignStmt>();
         stmt->name = std::move(name);
         stmt->value = std::move(value);
+        
+        return stmt;
+    }
+
+    StmtPtr Parser::parseIfStmt() {
+        const Token& t = expect(TokenType::If, "expected 'if'");
+        expect(TokenType::LParen, "expected '(' after 'if'");
+    
+
+        ExprPtr cond = parseExpr();
+        expect(TokenType::RParen, "expected ')' after condition");
+        skipNewlines();
+
+        auto thenBlock = parseBlock();
+        auto stmt = std::make_unique<IfStmt>();
+
+        stmt->line       = t.line;
+        stmt->column     = t.column;
+        stmt->cond       = std::move(cond);
+        stmt->thenBranch = std::move(thenBlock);
+        skipNewlines();
+    
+
+        if (check(TokenType::Else)) {
+            advance();
+            skipNewlines();
+            stmt->elseBranch = parseBlock();
+        }
+        
+        return stmt;
+    }
+
+    StmtPtr Parser::parseSwitchStmt() {
+        const Token& t = expect(TokenType::Switch, "expected 'switch'");
+        expect(TokenType::LParen, "expected '(' after 'switch'");
+
+        ExprPtr scrutinee = parseExpr();
+        expect(TokenType::RParen, "expected ')' after switch scrutinee");
+        expect(TokenType::LBrace, "expected '{' to start switch body");
+        skipNewlines();
+
+        auto stmt = std::make_unique<SwitchStmt>();
+        stmt->line     = t.line;
+        stmt->column   = t.column;
+        stmt->scrutinee = std::move(scrutinee);
+
+        while (!check(TokenType::RBrace) && !check(TokenType::Eof)) {
+            if (check(TokenType::Case)) {
+                advance();
+
+                ExprPtr val = parseExpr();
+                expect(TokenType::Colon, "expected ':' after case value");
+                skipNewlines();
+
+                auto body = parseBlock();
+
+                CaseArm arm;
+                arm.value = std::move(val);
+                arm.body  = std::move(body);
+                stmt->cases.push_back(std::move(arm));
+
+            } else if (check(TokenType::Default)) {
+                advance();
+                expect(TokenType::Colon, "expected ':' after 'default'");
+                skipNewlines();
+
+                stmt->defaultArm = parseBlock();
+
+            } else {
+                const Token& bad = peek();
+
+                throw std::runtime_error(
+                    "expected 'case' or 'default' in switch at line " +
+                    std::to_string(bad.line) + ", column " + std::to_string(bad.column)
+                );
+            }
+
+            skipNewlines();
+        }
+
+        expect(TokenType::RBrace, "expected '}' to close switch body");
+        return stmt;
+    }
+
+    StmtPtr Parser::parseDoStmt() {
+        const Token& t = expect(TokenType::Do, "expected 'do' keyword");
+        skipNewlines();
+
+        auto body = parseBlock();
+        skipNewlines(); 
+
+        expect(TokenType::Along, "expected 'along' after do-block");
+        expect(TokenType::LParen, "expected '(' after 'along'");
+
+        ExprPtr cond = parseExpr();
+        expect(TokenType::RParen, "expected ')' after along condition");
+
+        if (check(TokenType::NewLine))
+            advance();
+
+        auto stmt = std::make_unique<DoStmt>();
+
+        stmt->line   = t.line;
+        stmt->column = t.column;
+        stmt->cond   = std::move(cond);
+        stmt->body   = std::move(body);
+        
+        return stmt;
+    }
+
+    StmtPtr Parser::parseForStmt() {
+        const Token& t = expect(TokenType::For, "expected 'for' keyword");
+        expect(TokenType::LParen, "expected '(' after 'for'");
+
+        StmtPtr init;
+
+        if (check(TokenType::Let))
+            init = parseLetStmt();
+        else
+            init = parseAssignStmt();
+
+        expect(TokenType::Semicolon, "expected ';' after loop initializer");
+
+        ExprPtr cond = parseExpr();
+        expect(TokenType::Semicolon, "expected ';' after loop condition");
+
+        StmtPtr step = parseAssignStmt();
+        expect(TokenType::RParen, "expected ')' after for loop clauses");
+
+        skipNewlines();
+        auto body = parseBlock();
+
+        auto stmt = std::make_unique<ForStmt>();
+        
+        stmt->line = t.line;
+        stmt->column = t.column;
+        stmt->init = std::move(init);
+        stmt->cond = std::move(cond);
+        stmt->step = std::move(step);
+        stmt->body = std::move(body);
+
+        return stmt;
+    }
+
+    StmtPtr Parser::parseWhileStmt() {
+        const Token& t = expect(TokenType::While, "expected 'while'");
+        expect(TokenType::LParen, "expected '(' after 'while'");
+    
+
+        ExprPtr cond = parseExpr();
+        expect(TokenType::RParen, "expected ')' after condition");
+        skipNewlines();
+
+        auto body = parseBlock();
+        auto stmt = std::make_unique<WhileStmt>();
+
+        stmt->line   = t.line;
+        stmt->column = t.column;
+        stmt->cond   = std::move(cond);
+        stmt->body   = std::move(body);
+
         return stmt;
     }
 
     ExprPtr Parser::parseExpr() {
-        return parseAddExpr();
+        return parseOrExpr();
+    }
+
+    ExprPtr Parser::parseOrExpr() {
+        ExprPtr left = parseAndExpr();
+
+        while (check(TokenType::Or)) {
+            std::string op = peek().lexeme;
+            advance();
+            ExprPtr right = parseAndExpr();
+            auto bin = std::make_unique<BinaryExpr>();
+            bin->op  = op;
+            bin->lhs = std::move(left);
+            bin->rhs = std::move(right);
+            left = std::move(bin);
+        }
+
+        return left;
+    }
+
+    ExprPtr Parser::parseAndExpr() {
+        ExprPtr left = parseCompareExpr();
+
+        while (check(TokenType::And)) {
+            std::string op = peek().lexeme;
+            advance();
+            ExprPtr right = parseCompareExpr();
+            auto bin = std::make_unique<BinaryExpr>();
+            bin->op  = op;
+            bin->lhs = std::move(left);
+            bin->rhs = std::move(right);
+            left = std::move(bin);
+        }
+
+        return left;
+    }
+
+    ExprPtr Parser::parseCompareExpr() {
+        ExprPtr left = parseAddExpr();
+
+        while (check(TokenType::Less)    || check(TokenType::LessEq) ||
+               check(TokenType::Greater) || check(TokenType::GreaterEq) ||
+               check(TokenType::EqEq)   || check(TokenType::NotEq)) {
+            std::string op = peek().lexeme;
+            advance();
+            ExprPtr right = parseAddExpr();
+            auto bin = std::make_unique<BinaryExpr>();
+            bin->op  = op;
+            bin->lhs = std::move(left);
+            bin->rhs = std::move(right);
+            left = std::move(bin);
+        }
+
+        return left;
     }
 
     ExprPtr Parser::parseIntLit() {
@@ -235,14 +469,28 @@ namespace ZCompiler {
         return left;
     }
 
+    ExprPtr Parser::parseUnaryExpr() {
+        if (check(TokenType::Not) || check(TokenType::Minus)) {
+            const Token& t = advance();
+            auto expr = std::make_unique<UnaryExpr>();
+            expr->op      = t.lexeme;
+            expr->line    = t.line;
+            expr->column  = t.column;
+            expr->operand = parseUnaryExpr();
+            return expr;
+        }
+
+        return parsePrimaryExpr();
+    }
+
     ExprPtr Parser::parseMulExpr() {
-        ExprPtr left = parsePrimaryExpr();
+        ExprPtr left = parseUnaryExpr();
 
         while (check(TokenType::Star) || check(TokenType::Slash) || check(TokenType::Percent)) {
             std::string op = peek().lexeme;
             advance();
 
-            ExprPtr right = parsePrimaryExpr();
+            ExprPtr right = parseUnaryExpr();
 
             auto bin = std::make_unique<BinaryExpr>();
             bin->op    = op;

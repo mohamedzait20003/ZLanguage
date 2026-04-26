@@ -34,11 +34,22 @@ namespace ZCompiler {
             StmtPtr parseReturnStmt();
             StmtPtr parseAssignStmt();
 
+            StmtPtr parseIfStmt();
+            StmtPtr parseSwitchStmt();
+
+            StmtPtr parseDoStmt();
+            StmtPtr parseForStmt();
+            StmtPtr parseWhileStmt();
+           
             ExprPtr parseExpr();
+            ExprPtr parseOrExpr();
             ExprPtr parseIntLit();
+            ExprPtr parseAndExpr();
             ExprPtr parseAddExpr();
             ExprPtr parseMulExpr();
+            ExprPtr parseUnaryExpr();
             ExprPtr parsePrimaryExpr();
             ExprPtr parseCallorIdent();
+            ExprPtr parseCompareExpr();
     };
 }
