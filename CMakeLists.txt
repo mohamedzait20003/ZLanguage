@@ -20,13 +20,20 @@ target_include_directories(zc PRIVATE Include ${LLVM_INCLUDE_DIRS})
 separate_arguments(LLVM_DEFINITIONS_LIST NATIVE_COMMAND "${LLVM_DEFINITIONS}")
 target_compile_options(zc PRIVATE ${LLVM_DEFINITIONS_LIST})
 
-llvm_map_components_to_libnames(llvm_libs
-    core support irreader
-    codegen mc mcparser target
-    x86codegen x86info x86desc x86asmparser
-    passes
-)
-target_link_libraries(zc PRIVATE ${llvm_libs})
+if(LLVM_LINK_LLVM_DYLIB AND TARGET LLVM)
+    message(STATUS "Linking against shared LLVM")
+    target_link_libraries(zc PRIVATE LLVM)
+    file(WRITE ${CMAKE_BINARY_DIR}/llvm_bin_dir.txt "${LLVM_TOOLS_BINARY_DIR}")
+else()
+    message(STATUS "Linking against static LLVM component libraries")
+    llvm_map_components_to_libnames(llvm_libs
+        core support irreader
+        codegen mc mcparser target
+        x86codegen x86info x86desc x86asmparser
+        passes
+    )
+    target_link_libraries(zc PRIVATE ${llvm_libs})
+endif()
 
 # `cmake --build build --target check` runs the whole suite.
 # Test/run_tests.sh can also be invoked directly, optionally with a name filter.

@@ -19,9 +19,10 @@ M3 currently has the scalar primitives (`int`, `int32`, `int64`, `int128`, `floa
 
 ## Building
 
-Requires **LLVM 21** development libraries, CMake 3.20+, and a C++17 compiler. The reference setup is MSYS2 UCRT64:
+Requires **LLVM 22** development libraries, CMake 3.20+, and a C++17 compiler. The reference setup is MSYS2 UCRT64:
 
 ```bash
+pacman -Syu                                          # do this first — see below
 pacman -S mingw-w64-ucrt-x86_64-llvm mingw-w64-ucrt-x86_64-cmake mingw-w64-ucrt-x86_64-ninja
 ```
 
@@ -32,7 +33,14 @@ cmake --build build
 
 This produces `build/zc`. If CMake complains that the cache was created in a different directory, delete `build/` and re-run the configure step.
 
-> From M17 onward the tensor library adds an **MLIR** dependency, which is version-locked to LLVM and will force an LLVM upgrade. It is gated behind `-DZ_ENABLE_MLIR=ON` so everything below M17 builds without it. See the prerequisite section of [docs/Plan.md](docs/Plan.md).
+**Two environment traps worth knowing**, both of which produce failures that look like compiler bugs:
+
+- **Do a full `pacman -Syu`, not a targeted install.** MSYS2 does not support partial upgrades. Installing LLVM without upgrading the rest pulls in a build made against a newer GCC runtime, and `zc.exe` then dies at startup with `STATUS_ENTRYPOINT_NOT_FOUND` (exit `127` from bash, `-1073741511` from PowerShell) — no diagnostic, nothing on stderr.
+- **`zc` links the shared `libLLVM`, so LLVM's `bin` directory must be on `PATH`** to run it. `Test/run_tests.sh` handles this automatically by reading the path CMake records in `build/llvm_bin_dir.txt`, but invoking `build/zc.exe` by hand from a shell without `C:\msys64\ucrt64\bin` on `PATH` fails the same silent way.
+
+CMake links the single shared `libLLVM` when the distribution provides one (MSYS2 sets `LLVM_LINK_LLVM_DYLIB=ON`) and falls back to static component libraries otherwise. The static path is a genuine fallback rather than a preference: linking ~70 static LLVM archives exhausts the BFD linker, which fails with a bare `ld returned 5 exit status` and no further explanation.
+
+> From M17 onward the tensor library adds an **MLIR** dependency, version-locked to LLVM — `MLIRConfig.cmake` does `find_package(LLVM ... EXACT)`, so the two must be the same version down to the patch. It is gated behind `-DZ_ENABLE_MLIR=ON` so everything below M17 builds without it. See the prerequisite section of [docs/Plan.md](docs/Plan.md).
 
 ## Usage
 

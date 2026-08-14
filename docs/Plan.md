@@ -33,9 +33,16 @@ Feature scope:
 pacman -S mingw-w64-ucrt-x86_64-mlir
 ```
 
-Concrete state at time of writing: the repo has LLVM **21.1.8** installed; the MSYS2 `mlir` package is **22.1.7** and depends on `llvm-libs`, so installing it **upgrades LLVM 21 → 22**. Budget for that: ~1.2 GB installed, plus one round of fixing whatever LLVM 22 API churn breaks in `CodeGen.cpp` / `main.cpp`. Do this upgrade as a standalone step *before* M17 starts, not inside it — a version bump tangled with new tensor work makes both undebuggable.
+**This migration has been done.** The toolchain is now LLVM/clang **22.1.8**, MLIR **22.1.8**, GCC **16.2.0**. What actually happened is worth recording, because three of the four predictions above were wrong in instructive ways:
 
-After install, CMake picks MLIR up via `find_package(MLIR REQUIRED CONFIG)`; `MLIR_DIR` lands at `C:\msys64\ucrt64\lib\cmake\mlir` and `MLIRConfig.cmake` re-exports `LLVM_DIR`, so the existing LLVM lookup keeps working.
+- **There was no LLVM C++ API churn at all.** Every source file compiled unchanged against LLVM 22. The API surface `zc` touches (`IRBuilder`, `PassBuilder`, `TargetMachine`, `verifyModule`) was stable across the major version. The budgeted "round of fixing API breakage" cost nothing.
+- **`pacman -S mlir` did not upgrade LLVM.** The package's dependency on `llvm-libs` carries no version constraint, so MLIR 22 installed happily next to LLVM 21 — and `MLIRConfig.cmake` does `find_package(LLVM ${LLVM_VERSION} EXACT REQUIRED CONFIG)`, so that combination is simply unusable. The version lock is real but pacman will not enforce it for you.
+- **A targeted upgrade is a trap.** Upgrading only the LLVM family produced a `libLLVM-22.dll` built against GCC 16 running on a GCC 15 runtime, and `zc.exe` then failed at process start with `STATUS_ENTRYPOINT_NOT_FOUND` — exit `127` with no output from bash, `-1073741511` from PowerShell. `gcc-libs` could not be upgraded alone either, because `gcc` pins its exact version. The fix was a full `pacman -Syu` (34 mingw packages, GCC 15 → 16, binutils, CRT/headers, CMake). **Do the full system upgrade first, then install MLIR.**
+- **Static linking against LLVM 22 no longer works here.** Linking the ~70 static component archives exhausts the BFD linker, which reports only `collect2.exe: error: ld returned 5 exit status` with no diagnostic. MSYS2 sets `LLVM_LINK_LLVM_DYLIB=ON` and exports a shared `LLVM` target; `CMakeLists.txt` now prefers that and keeps the static component list as a fallback. The consequence is that `zc` needs LLVM's `bin` directory on `PATH` at runtime, which CMake records in `build/llvm_bin_dir.txt` for the test runner.
+
+The whole sequence was validated by the 48-assertion test suite, which is the reason the breakage was diagnosable at all — every codegen test failing identically with exit 127 pointed straight at process startup rather than at codegen.
+
+CMake picks MLIR up via `find_package(MLIR REQUIRED CONFIG)`; `MLIR_DIR` lands at `C:\msys64\ucrt64\lib\cmake\mlir` and `MLIRConfig.cmake` re-exports `LLVM_DIR`, so the existing LLVM lookup keeps working.
 
 **MLIR is opt-in in the build.** Gate it behind `-DZ_ENABLE_MLIR=ON` so that M0–M16 keep building on an LLVM-only install. Contributors working below M17 never need the 1.2 GB dependency.
 

@@ -32,6 +32,24 @@ if [ ! -x "$ZC" ]; then
     exit 1
 fi
 
+if [ -f "$ROOT/build/llvm_bin_dir.txt" ]; then
+    LLVM_BIN="$(tr -d '\r\n' < "$ROOT/build/llvm_bin_dir.txt")"
+
+    if [ -n "$LLVM_BIN" ]; then
+        if command -v cygpath >/dev/null 2>&1; then
+            LLVM_BIN="$(cygpath -u "$LLVM_BIN")"
+        fi
+        PATH="$LLVM_BIN:$PATH"
+        export PATH
+    fi
+fi
+
+if ! "$ZC" --dump-tokens "$ROOT/Test/codegen/m0_hello.z" >/dev/null 2>&1; then
+    echo "error: $ZC cannot run (missing shared libraries?)"
+    echo "if zc links the shared libLLVM, LLVM's bin directory must be on PATH"
+    exit 1
+fi
+
 FILTER="${1:-}"
 OPT_LEVELS="${ZOPT:--O0 -O1 -O2 -O3}"
 
