@@ -5,13 +5,35 @@
 
 namespace ZCompiler {
     enum class TokenType {
-        IntLit,
-        Identifier,
-
         Fn,
-        Int,
         Let,
         Return,
+        Identifier,
+        StaticCast,
+
+        True,
+        False,
+        Null,
+        Nullptr,
+
+        Int,
+        Int32,
+        Int64,
+        Int128,
+        Float,
+        Float16,
+        Float32,
+        Float64,
+        Double,
+        Bool,
+        Char,
+        String,
+
+        IntLit,
+        FloatLit,
+        DoubleLit,
+        CharLit,
+        StringLit,
 
         LParen,
         RParen,
@@ -48,6 +70,8 @@ namespace ZCompiler {
         While,
         Do,
         Along,
+        Break,
+        Continue,
         
         NewLine,
         Semicolon,

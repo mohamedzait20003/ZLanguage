@@ -1,0 +1,7 @@
+fn main() -> int {
+    let v: int = 1
+    switch (v) {
+        case 1: { continue }
+    }
+    return 0
+}

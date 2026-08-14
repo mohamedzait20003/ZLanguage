@@ -40,16 +40,25 @@ namespace ZCompiler {
             StmtPtr parseDoStmt();
             StmtPtr parseForStmt();
             StmtPtr parseWhileStmt();
+            StmtPtr parseBreakStmt();
+            StmtPtr parseContinueStmt();
            
             ExprPtr parseExpr();
-            ExprPtr parseOrExpr();
-            ExprPtr parseIntLit();
-            ExprPtr parseAndExpr();
-            ExprPtr parseAddExpr();
-            ExprPtr parseMulExpr();
             ExprPtr parseUnaryExpr();
             ExprPtr parsePrimaryExpr();
             ExprPtr parseCallorIdent();
             ExprPtr parseCompareExpr();
+
+            ExprPtr parseIntLit();
+            ExprPtr parseCharLit();
+            ExprPtr parseBoolLit();
+            ExprPtr parseFloatLit();
+            ExprPtr parseDoubleLit();
+            ExprPtr parseStringLit();
+
+            ExprPtr parseOrExpr();
+            ExprPtr parseAndExpr();
+            ExprPtr parseAddExpr();
+            ExprPtr parseMulExpr();
     };
 }

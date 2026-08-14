@@ -2,6 +2,7 @@
 
 #include <cctype>
 #include <string>
+#include <cstdint>
 #include <stdexcept>
 
 namespace ZCompiler {
@@ -64,6 +65,34 @@ namespace ZCompiler {
             type = TokenType::Fn;
         else if(lexeme == "int")
             type = TokenType::Int;
+        else if(lexeme == "int32")
+            type = TokenType::Int32;
+        else if(lexeme == "int64")
+            type = TokenType::Int64;
+        else if(lexeme == "int128")
+            type = TokenType::Int128;
+        else if(lexeme == "float")
+            type = TokenType::Float;
+        else if(lexeme == "float16")
+            type = TokenType::Float16;
+        else if(lexeme == "float32")
+            type = TokenType::Float32;
+        else if(lexeme == "float64")
+            type = TokenType::Float64;
+        else if(lexeme == "double")
+            type = TokenType::Double;
+        else if(lexeme == "bool")
+            type = TokenType::Bool;
+        else if(lexeme == "char")
+            type = TokenType::Char;
+        else if(lexeme == "string")
+            type = TokenType::String;
+        else if(lexeme == "true")
+            type = TokenType::True;
+        else if(lexeme == "false")
+            type = TokenType::False;
+        else if(lexeme == "static_cast")
+            type = TokenType::StaticCast;
         else if(lexeme == "let")
             type = TokenType::Let;
         else if(lexeme == "if")
@@ -84,6 +113,10 @@ namespace ZCompiler {
             type = TokenType::Do;
         else if (lexeme == "along")
             type = TokenType::Along;
+        else if(lexeme == "break")
+            type = TokenType::Break;
+        else if(lexeme == "continue")
+            type = TokenType::Continue;
         else if(lexeme == "return")
             type = TokenType::Return;
 
@@ -97,8 +130,145 @@ namespace ZCompiler {
             advance();
         }
 
-        std::string lexeme(source_.substr(start, pos_ - start));
-        return makeToken(TokenType::IntLit, std::move(lexeme), startLine, startColumn);
+        if(!isAtEnd() && peek() == '.' && std::isdigit(static_cast<unsigned char>(peek(1)))) {
+            advance();
+
+            while (!isAtEnd() && std::isdigit(static_cast<unsigned char>(peek())))
+                advance();
+
+            if (!isAtEnd() && (peek() == 'f' || peek() == 'F')) {
+                advance();
+                return makeToken(TokenType::FloatLit, std::string(source_.substr(start, pos_ - start)), startLine, startColumn);
+            }
+
+            return makeToken(TokenType::DoubleLit, std::string(source_.substr(start, pos_ - start)), startLine, startColumn);
+        }
+
+        return makeToken(TokenType::IntLit, std::string(source_.substr(start, pos_ - start)), startLine, startColumn);
+    }
+
+    Token Lexer::scanCharLit(int startLine, int startColumn){
+        if (isAtEnd()) {
+            throw std::runtime_error(
+                "lex error: unterminated character literal at line " +
+                std::to_string(startLine) + ", column " + std::to_string(startColumn)
+            );
+        }
+
+        uint32_t codepoint;
+
+        if(peek() == '\\'){
+            advance();
+
+            if (isAtEnd()) {
+                throw std::runtime_error(
+                    "lex error: unterminated character literal at line " +
+                    std::to_string(startLine) + ", column " + std::to_string(startColumn)
+                );
+            }
+
+            char esc = advance();
+
+            switch (esc) {
+                case 'n': 
+                    codepoint = '\n'; 
+                    break;
+                case 't': 
+                    codepoint = '\t';
+                    break;
+                case 'r': 
+                    codepoint = '\r'; 
+                    break;
+                case '\\': 
+                    codepoint = '\\'; 
+                    break;
+                case '\'': 
+                    codepoint = '\'';
+                    break;
+                case '"': 
+                    codepoint = '"'; 
+                    break;
+                default:
+                    throw std::runtime_error(
+                        std::string("unknown escape '\\") + esc
+                        + "' at line " + std::to_string(startLine)
+                    );
+            }
+        } else {
+            codepoint = static_cast<unsigned char>(advance());
+        }
+
+        if (!match('\'')) {
+            throw std::runtime_error(
+                "lex error: unterminated character literal at line " +
+                std::to_string(startLine) + ", column " + std::to_string(startColumn)
+            );
+        }
+
+        return makeToken(TokenType::CharLit, std::to_string(codepoint), startLine, startColumn);
+    }
+    
+    Token Lexer::scanStringLit(int startLine, int startColumn) {
+        std::string value;
+
+        while (!isAtEnd() && peek() != '"') {
+            if(peek() == '\n') {
+                throw std::runtime_error(
+                    "lex error: unterminated string literal at line " +
+                    std::to_string(startLine) + ", column " + std::to_string(startColumn)
+                );
+            }
+
+            char c = advance();
+            if (c == '\\') {
+                if (isAtEnd()) {
+                    throw std::runtime_error(
+                        "lex error: unterminated string literal at line " +
+                        std::to_string(startLine) + ", column " + std::to_string(startColumn)
+                    );
+                }
+
+                char esc = advance();
+
+                switch (esc) {
+                    case 'n': 
+                        value += '\n'; 
+                        break;
+                    case 't': 
+                        value += '\t';
+                        break;
+                    case 'r': 
+                        value += '\r'; 
+                        break;
+                    case '\\': 
+                        value += '\\'; 
+                        break;
+                    case '\'': 
+                        value += '\'';
+                        break;
+                    case '"': 
+                        value += '"'; 
+                        break;
+                    default:
+                        throw std::runtime_error(
+                            std::string("unknown escape '\\") + esc
+                            + "' at line " + std::to_string(startLine)
+                        );
+                }
+            } else {
+                value += c;
+            }
+        }
+
+        if (isAtEnd()) {
+            throw std::runtime_error(
+                "lex error: unterminated string literal at line " +
+                std::to_string(startLine) + ", column " + std::to_string(startColumn)
+            );
+        }
+
+        advance();
+        return makeToken(TokenType::StringLit, std::move(value), startLine, startColumn);
     }
 
     Token Lexer::scanPunctuation(int startLine, int startColumn) {
@@ -210,6 +380,16 @@ namespace ZCompiler {
                 continue;
             }
 
+            if (c == '\'') {
+                tokens.push_back(scanCharLit(startLine, startColumn));
+                continue;
+            }
+
+            if (c == '"') {
+                tokens.push_back(scanStringLit(startLine, startColumn));
+                continue;
+            }
+
             tokens.push_back(scanPunctuation(startLine, startColumn));
         }
 
@@ -221,12 +401,48 @@ namespace ZCompiler {
         switch (k) {
             case TokenType::IntLit:      
                 return "IntLit";
+            case TokenType::FloatLit:    
+                return "FloatLit";
+            case TokenType::DoubleLit:
+                return "DoubleLit";
+            case TokenType::CharLit:
+                return "CharLit";
+            case TokenType::StringLit:
+                return "StringLit";
+            case TokenType::True:
+                return "True";
+            case TokenType::False:
+                return "False";
+            case TokenType::StaticCast:
+                return "StaticCast";
             case TokenType::Identifier:  
                 return "Identifier";
             case TokenType::Fn:          
                 return "Fn";
             case TokenType::Int:         
                 return "Int";
+            case TokenType::Int32:      
+                return "Int32";
+            case TokenType::Int64:      
+                return "Int64";
+            case TokenType::Int128:
+                return "Int128";
+            case TokenType::Float:
+                return "Float";
+            case TokenType::Float16:
+                return "Float16";
+            case TokenType::Float32:
+                return "Float32";
+            case TokenType::Float64:
+                return "Float64";
+            case TokenType::Double:
+                return "Double";
+            case TokenType::Bool:
+                return "Bool";
+            case TokenType::Char:
+                return "Char";
+            case TokenType::String:
+                return "String";
             case TokenType::Return:      
                 return "Return";
             case TokenType::LParen:      
@@ -299,7 +515,12 @@ namespace ZCompiler {
                 return "Do";
             case TokenType::Along:
                 return "Along";
-        }
+            case TokenType::Break:
+                return "Break";
+            case TokenType::Continue:
+                return "Continue";
+        };
+
         return "<unknown>";
     }
 }

@@ -1,0 +1,7 @@
+fn main() -> int {
+    let a: int32 = 2
+    switch (a) {
+        case 5000000000: { print(1) }
+    }
+    return 0
+}

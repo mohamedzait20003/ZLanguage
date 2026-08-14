@@ -1,0 +1,87 @@
+# M3 example — full type system: int variants, float, double, bool, char, string
+
+# ── Type promotion in arithmetic ──────────────────────────────────────────────
+
+fn add_double(a: double, b: double) -> double {
+    return a + b
+}
+
+fn is_positive(x: double) -> bool {
+    return x > 0.0
+}
+
+fn abs_val(x: double) -> double {
+    if (x < 0.0) {
+        return x * -1.0
+    }
+    return x
+}
+
+fn clamp(x: double, lo: double, hi: double) -> double {
+    if (x < lo) { return lo }
+    if (x > hi) { return hi }
+    return x
+}
+
+# ── Main ──────────────────────────────────────────────────────────────────────
+
+fn main() -> int {
+    # --- integer variants ---
+    let a: int32  = 100
+    let b: int64  = 10000000000
+    let c: int128 = 99999999999999
+    print(a)    # 100
+    print(b)    # 10000000000
+    print(c)    # 99999999999999
+
+    # --- float and double literals ---
+    let pi: float  = 3.14f
+    let e:  double = 2.718281828
+    print(pi)   # 3.140000
+    print(e)    # 2.718282
+
+    # --- bool literals ---
+    let t: bool = true
+    let f: bool = false
+    print(t)    # 1
+    print(f)    # 0
+
+    # --- char literal ---
+    let ch: char = 'Z'
+    print(ch)   # Z
+
+    # --- string literal ---
+    let greeting: string = "hello"
+    print(greeting)   # hello
+
+    # --- arithmetic with doubles ---
+    let x: double = 1.5
+    let y: double = 2.5
+    print(x + y)    # 4.000000
+    print(x * y)    # 3.750000
+    print(y - x)    # 1.000000
+
+    # --- function calls with doubles ---
+    print(add_double(3.0, 4.5))     # 7.500000
+    print(is_positive(5.0))         # 1
+    print(is_positive(-3.0))        # 0
+    print(abs_val(-7.5))            # 7.500000
+    print(clamp(15.0, 0.0, 10.0))  # 10.000000
+    print(clamp(-5.0, 0.0, 10.0))  # 0.000000
+
+    # --- bool from comparison ---
+    let gt: bool = 5.0 > 3.0
+    let lt: bool = 1.0 < 0.5
+    print(gt)   # 1
+    print(lt)   # 0
+
+    # --- int arithmetic (existing) ---
+    let n: int = 42
+    let m: int = 7
+    print(n + m)    # 49
+    print(n * m)    # 294
+    print(n / m)    # 6
+    print(n % m)    # 0
+
+    return 0
+}

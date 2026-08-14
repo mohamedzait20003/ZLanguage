@@ -1,0 +1,29 @@
+# A `let` in an inner scope must not overwrite the outer binding.
+# Regression: CodeGen used one flat symbol map per function.
+
+fn main() -> int {
+    let x: int = 1
+
+    if (1) {
+        let x: int = 2
+        print(x)            # 2
+    }
+
+    print(x)                # 1 — outer binding restored
+
+    let n: int = 0
+    while (n < 1) {
+        let x: int = 30
+        print(x)            # 30
+        n = n + 1
+    }
+
+    print(x)                # 1
+
+    for (let x: int = 7; x < 8; x = x + 1) {
+        print(x)            # 7
+    }
+
+    print(x)                # 1 — loop variable did not leak
+    return 0
+}

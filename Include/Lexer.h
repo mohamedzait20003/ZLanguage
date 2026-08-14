@@ -29,6 +29,8 @@ namespace ZCompiler {
             
             // Scanners
             Token scanNumber(int startLine, int startColumn);
+            Token scanCharLit(int startLine, int startColumn);
+            Token scanStringLit(int startLine, int startColumn);
             Token scanPunctuation(int startLine, int startColumn);
             Token scanIdentifierOrKeyword(int startLine, int startColumn);
     };

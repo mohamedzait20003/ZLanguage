@@ -1,0 +1,77 @@
+# `break` and `continue` across all three loop forms, and their
+# interaction with `switch`.
+
+fn first_even(limit: int) -> int {
+    for (let i: int = 1; i <= limit; i = i + 1) {
+        if (i % 2 == 1) { continue }
+        return i
+    }
+    return -1
+}
+
+fn main() -> int {
+    # break exits the nearest loop
+    let i: int = 0
+    while (1) {
+        i = i + 1
+        if (i >= 3) { break }
+    }
+    print(i)                # 3
+
+    # continue in a `for` jumps to the step, so the loop still advances
+    let sum: int = 0
+    for (let k: int = 1; k <= 10; k = k + 1) {
+        if (k % 2 == 1) { continue }
+        sum = sum + k
+    }
+    print(sum)              # 2+4+6+8+10 = 30
+
+    print(first_even(7))    # 2
+
+    # break inside a switch exits the switch, not the enclosing loop
+    let hits: int = 0
+    for (let n: int = 1; n <= 4; n = n + 1) {
+        switch (n) {
+            case 2:  { break }
+            default: { hits = hits + 1 }
+        }
+    }
+    print(hits)             # 3
+
+    # continue inside a switch targets the enclosing loop
+    let seen: int = 0
+    for (let m: int = 1; m <= 4; m = m + 1) {
+        switch (m) {
+            case 3:  { continue }
+            default: { seen = seen + 1 }
+        }
+    }
+    print(seen)             # 3
+
+    # do...along: continue jumps to the post-test condition
+    let d: int = 0
+    let acc: int = 0
+    do {
+        d = d + 1
+        if (d == 2) { continue }
+        acc = acc + d
+    } along (d < 4)
+    print(acc)              # 1+3+4 = 8
+
+    # break in a do...along
+    let e: int = 0
+    do {
+        e = e + 1
+        if (e == 2) { break }
+    } along (e < 10)
+    print(e)                # 2
+
+    # statements after break are unreachable but must still emit valid IR
+    while (1) {
+        break
+        print(999)
+    }
+    print(-1)               # -1
+
+    return 0
+}

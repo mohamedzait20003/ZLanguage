@@ -1,0 +1,6 @@
+# Expected-output fixtures are compared byte for byte after CRLF stripping.
+# Pinning them to LF keeps the files identical across platforms.
+*.expected        text eol=lf
+*.expected-error  text eol=lf
+*.sh              text eol=lf
+*.z               text eol=lf

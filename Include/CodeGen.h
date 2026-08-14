@@ -4,6 +4,7 @@
 
 #include <memory>
 #include <string>
+#include <vector>
 #include <unordered_map>
 #include <llvm/IR/Module.h>
 #include <llvm/IR/IRBuilder.h>
@@ -23,12 +24,29 @@ namespace ZCompiler {
             std::unique_ptr<llvm::Module> module_;
 
             llvm::IRBuilder<> builder_;
-            std::unordered_map<std::string, llvm::AllocaInst*> symbols_;
+
+            // Mirrors Sema's scope stack. A flat map would let a shadowed `let`
+            // overwrite the outer binding and never restore it.
+            std::vector<std::unordered_map<std::string, llvm::AllocaInst*>> scopes_;
             
+            std::vector<llvm::BasicBlock*> breakTargets_;
+            std::vector<llvm::BasicBlock*> continueTargets_;
+
             llvm::Function* printf_ = nullptr;
+            llvm::Type* llvmType(TypeRef type);
+
+            void pushScope();
+            void popScope();
+            void declareVar(const std::string& name, llvm::AllocaInst* slot);
+            llvm::AllocaInst* lookupVar(const std::string& name) const;
+
             llvm::Value* genExpr(const Expr& expr);
+            llvm::Value* genPrint(const CallExpr& call);
+            llvm::Value* toBoolValue(llvm::Value* val);
+            llvm::Value* coerce(llvm::Value* val, llvm::Type* from, llvm::Type* to);
 
             void declarePrintf();
+            void startDeadBlock();
             void genStmt(const Stmt& stmt);
             void genFnDecl(const FnDecl& fn);
     };

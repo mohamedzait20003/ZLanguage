@@ -1,0 +1,42 @@
+# Functions that DO return on every path must be accepted. Guards against
+# the all-paths-return analysis becoming over-eager.
+
+fn via_if_else(n: int) -> int {
+    if (n > 0) {
+        return 1
+    } else {
+        return 2
+    }
+}
+
+fn via_switch(n: int) -> int {
+    switch (n) {
+        case 0:  { return 10 }
+        case 1:  { return 20 }
+        default: { return 30 }
+    }
+}
+
+fn via_trailing_return(n: int) -> int {
+    if (n > 0) {
+        return 1
+    }
+    return 2
+}
+
+fn via_do_along(n: int) -> int {
+    do {
+        return n * 2
+    } along (n < 0)
+}
+
+fn main() -> int {
+    print(via_if_else(5))           # 1
+    print(via_if_else(-5))          # 2
+    print(via_switch(0))            # 10
+    print(via_switch(9))            # 30
+    print(via_trailing_return(1))   # 1
+    print(via_trailing_return(0))   # 2
+    print(via_do_along(21))         # 42
+    return 0
+}

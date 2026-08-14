@@ -12,6 +12,7 @@ add_executable(zc
     Src/main.cpp
     Src/Lexer.cpp
     Src/Parser.cpp
+    Src/Sema.cpp
     Src/CodeGen.cpp
 )
 
@@ -26,3 +27,18 @@ llvm_map_components_to_libnames(llvm_libs
     passes
 )
 target_link_libraries(zc PRIVATE ${llvm_libs})
+
+# `cmake --build build --target check` runs the whole suite.
+# Test/run_tests.sh can also be invoked directly, optionally with a name filter.
+find_program(BASH_PROGRAM bash)
+if(BASH_PROGRAM)
+    add_custom_target(check
+        COMMAND ${BASH_PROGRAM} ${CMAKE_CURRENT_SOURCE_DIR}/Test/run_tests.sh
+        WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
+        DEPENDS zc
+        USES_TERMINAL
+        COMMENT "Running Z test suite"
+    )
+else()
+    message(STATUS "bash not found — 'check' target unavailable")
+endif()

@@ -1,0 +1,46 @@
+# Case constants must be built at the scrutinee's exact integer width.
+# Regression: every integer literal generated i64, so any narrower
+# scrutinee produced invalid IR ("Switch constants must all be same
+# type as switch value!").
+
+fn sign(n: int) -> int {
+    switch (n) {
+        case -1: { return 100 }
+        case 0:  { return 200 }
+        case 1:  { return 300 }
+        default: { return 999 }
+    }
+}
+
+fn main() -> int {
+    # negative case values
+    print(sign(-1))         # 100
+    print(sign(0))          # 200
+    print(sign(1))          # 300
+    print(sign(7))          # 999
+
+    # int32 scrutinee — i32, not i64
+    let a: int32 = 2
+    switch (a) {
+        case 1:  { print(11) }
+        case 2:  { print(22) }
+        default: { print(33) }
+    }                       # 22
+
+    # character scrutinee — also i32
+    let c: char = 'b'
+    switch (c) {
+        case 'a': { print(41) }
+        case 'b': { print(42) }
+        default:  { print(43) }
+    }                       # 42
+
+    # bool scrutinee — i1
+    let flag: bool = true
+    switch (flag) {
+        case true:  { print(51) }
+        case false: { print(52) }
+    }                       # 51
+
+    return 0
+}

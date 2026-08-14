@@ -1,5 +1,6 @@
 #include "Lexer.h"
 #include "Parser.h"
+#include "Sema.h"
 #include "CodeGen.h"
 
 #include <string>
@@ -95,8 +96,9 @@ static void dumpProgram(const ZCompiler::Program& prog) {
 
 int main(int argc, char* argv[]) {
     bool dumpTokens = false;
-    bool dumpAst    = false;
-    bool emitLlvm   = false;
+    bool dumpAst = false;
+    bool emitLlvm = false;
+    unsigned optLevel = 2;
 
     std::string inputFile;
     std::string outputFile = "a.exe";
@@ -104,20 +106,28 @@ int main(int argc, char* argv[]) {
     for (int i = 1; i < argc; ++i) {
         std::string arg = argv[i];
 
-        if (arg == "--dump-tokens") 
+        if (arg == "--dump-tokens")
             dumpTokens = true;
-        else if (arg == "--dump-ast")    
-            dumpAst    = true;
-        else if (arg == "--emit-llvm")   
-            emitLlvm   = true;
-        else if (arg == "-o" && i + 1 < argc) 
+        else if (arg == "--dump-ast")
+            dumpAst = true;
+        else if (arg == "--emit-llvm")
+            emitLlvm = true;
+        else if (arg == "-O0")
+            optLevel = 0;
+        else if (arg == "-O1")
+            optLevel = 1;
+        else if (arg == "-O2")
+            optLevel = 2;
+        else if (arg == "-O3")
+            optLevel = 3;
+        else if (arg == "-o" && i + 1 < argc)
             outputFile = argv[++i];
-        else 
+        else
             inputFile = arg;
     }
 
     if (inputFile.empty()) {
-        std::cerr << "usage: zc [--dump-tokens] [--dump-ast] [--emit-llvm] [-o out] <file.z>\n";
+        std::cerr << "usage: zc [--dump-tokens] [--dump-ast] [--emit-llvm] [-O0..-O3] [-o out] <file.z>\n";
         return 1;
     }
 
@@ -150,6 +160,9 @@ int main(int argc, char* argv[]) {
             return 0;
         }
 
+        ZCompiler::Sema sema;
+        sema.check(program);
+
         ZCompiler::CodeGen cg(inputFile);
         cg.generate(program);
         auto module = cg.takeModule();
@@ -159,11 +172,6 @@ int main(int argc, char* argv[]) {
         if (llvm::verifyModule(*module, &verifyStream)) {
             std::cerr << "IR verification failed:\n" << verifyErr << "\n";
             return 1;
-        }
-
-        if (emitLlvm) {
-            module->print(llvm::outs(), nullptr);
-            return 0;
         }
 
         llvm::InitializeNativeTarget();
@@ -182,24 +190,50 @@ int main(int argc, char* argv[]) {
         }
 
         llvm::TargetOptions opt;
-        llvm::TargetMachine* tm = target->createTargetMachine(
+        std::unique_ptr<llvm::TargetMachine> tm(target->createTargetMachine(
             targetTriple, "generic", "", opt, std::nullopt
-        );
+        ));
         module->setDataLayout(tm->createDataLayout());
 
-        // O2 optimisation pipeline
-        llvm::PassBuilder pb(tm);
-        llvm::LoopAnalysisManager     lam;
-        llvm::FunctionAnalysisManager fam;
-        llvm::CGSCCAnalysisManager    cgam;
-        llvm::ModuleAnalysisManager   mam;
+        // The optimisation pipeline runs before --emit-llvm so the dumped IR shows
+        // what the backend will actually see. `-O0 --emit-llvm` gives the raw
+        // CodeGen output; `-O2 --emit-llvm` shows it after the passes.
+        if (optLevel > 0) {
+            llvm::OptimizationLevel level = llvm::OptimizationLevel::O2;
 
-        pb.registerModuleAnalyses(mam);
-        pb.registerCGSCCAnalyses(cgam);
-        pb.registerFunctionAnalyses(fam);
-        pb.registerLoopAnalyses(lam);
-        pb.crossRegisterProxies(lam, fam, cgam, mam);
-        pb.buildPerModuleDefaultPipeline(llvm::OptimizationLevel::O2).run(*module, mam);
+            if (optLevel == 1)
+                level = llvm::OptimizationLevel::O1;
+            else if (optLevel == 3)
+                level = llvm::OptimizationLevel::O3;
+
+            llvm::PassBuilder pb(tm.get());
+            llvm::LoopAnalysisManager     lam;
+            llvm::FunctionAnalysisManager fam;
+            llvm::CGSCCAnalysisManager    cgam;
+            llvm::ModuleAnalysisManager   mam;
+
+            pb.registerModuleAnalyses(mam);
+            pb.registerCGSCCAnalyses(cgam);
+            pb.registerFunctionAnalyses(fam);
+            pb.registerLoopAnalyses(lam);
+            pb.crossRegisterProxies(lam, fam, cgam, mam);
+            pb.buildPerModuleDefaultPipeline(level).run(*module, mam);
+
+            // Optimisation must not be able to produce malformed IR. If it does,
+            // the input IR relied on undefined behaviour.
+            std::string postErr;
+            llvm::raw_string_ostream postStream(postErr);
+            if (llvm::verifyModule(*module, &postStream)) {
+                std::cerr << "IR verification failed after -O" << optLevel
+                          << " pipeline:\n" << postErr << "\n";
+                return 1;
+            }
+        }
+
+        if (emitLlvm) {
+            module->print(llvm::outs(), nullptr);
+            return 0;
+        }
 
         std::string objFile = outputFile + ".o";
         std::error_code ec;
@@ -226,7 +260,6 @@ int main(int argc, char* argv[]) {
         }
 
         std::cout << "compiled: " << outputFile << "\n";
-        delete tm;
 
     } catch (const std::exception& e) {
         std::cerr << "error: " << e.what() << "\n";

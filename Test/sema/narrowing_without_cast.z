@@ -1,0 +1,6 @@
+fn main() -> int {
+    let d: double = 3.9
+    let n: int = d
+    print(n)
+    return 0
+}
