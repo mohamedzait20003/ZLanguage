@@ -113,10 +113,10 @@ Two invariants worth knowing before touching the middle of it:
 
 - **CodeGen dispatches on `Expr::resolvedType`, not on the LLVM type.** Several Z types share one LLVM type — `character` and `int32` are both `i32`, and `string` and `dynamic` will both be pointers. Branching on the LLVM type to make a *semantic* decision is a bug.
 - **Sema and CodeGen must agree on scoping.** Both maintain a scope stack and push/pop in exactly the same places. If they diverge, Sema accepts a program that CodeGen resolves to the wrong storage slot.
+- **`&&` and `||` are lowered to branches, not to `and`/`or`.** They short-circuit, so the right operand is generated inside its own basic block and the result merges through a `phi`. Any future operator with conditional evaluation (the M3 ternary) needs the same treatment — generating both operands first and selecting afterwards is wrong whenever an operand can have a side effect.
 
 ## Known gaps
 
-- **`&&` and `||` do not short-circuit.** Both operands are always evaluated — `0 && side_effect()` still calls `side_effect()`. The result value is correct for pure operands, so this only shows up when the right-hand side has side effects. Fixing it means lowering to branches with a `phi` instead of `CreateAnd`/`CreateOr`. Behaviour is identical at every optimisation level, so this is a codegen bug rather than an optimiser one.
 - `--dump-ast` only handles a handful of node types; control-flow and M3 expression nodes print as `UnknownStmt` / `UnknownExpr`. There is no parser test suite until this is fixed, since it would otherwise lock in incorrect output.
 - `Include/Types.h` is empty and `TypeRef` is a flat enum in `AST.h`. It cannot represent parameterised types (`vector<int>`, `tensor<float, 2, 2>`) and will need to become a structured type before M11.
 - `int128` values print via truncation to 64 bits.

@@ -41,8 +41,9 @@ namespace ZCompiler {
             llvm::AllocaInst* lookupVar(const std::string& name) const;
 
             llvm::Value* genExpr(const Expr& expr);
-            llvm::Value* genPrint(const CallExpr& call);
             llvm::Value* toBoolValue(llvm::Value* val);
+            llvm::Value* genPrint(const CallExpr& call);
+            llvm::Value* genShortCircuit(const BinaryExpr& bin);
             llvm::Value* coerce(llvm::Value* val, llvm::Type* from, llvm::Type* to);
 
             void declarePrintf();

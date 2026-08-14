@@ -1,0 +1,41 @@
+# `&&` and `||` must not evaluate their right operand when the left one
+# already decides the result. Regression: both were lowered to a single
+# `and`/`or` over two eagerly-generated operands.
+
+fn side(n: int) -> int {
+    print(n)                    # marks that the right operand ran
+    return n
+}
+
+fn main() -> int {
+    # --- right operand must be SKIPPED ---
+    if (0 && side(11)) { print(100) }   # nothing at all
+    if (1 || side(22)) { print(200) }   # 200 only
+
+    # --- right operand must RUN ---
+    if (1 && side(33)) { print(300) }   # 33 then 300
+    if (0 || side(44)) { print(400) }   # 44 then 400
+
+    # --- result values are unchanged ---
+    print(1 && 1)       # 1
+    print(1 && 0)       # 0
+    print(0 && 1)       # 0
+    print(0 || 0)       # 0
+    print(1 || 0)       # 1
+    print(0 || 1)       # 1
+
+    # --- chained: a nested short-circuit on the left of another ---
+    print(1 && 1 && 0)  # 0
+    print(0 || 0 || 1)  # 1
+    print(1 && 0 && side(55))   # 0 — side never runs
+    print(0 || 1 || side(66))   # 1 — side never runs
+
+    # --- inside a loop, so the phi is reached from a back edge ---
+    let hits: int = 0
+    for (let i: int = 0; i < 4; i = i + 1) {
+        if (i > 0 && i < 3) { hits = hits + 1 }
+    }
+    print(hits)         # i = 1, 2 -> 2
+
+    return 0
+}

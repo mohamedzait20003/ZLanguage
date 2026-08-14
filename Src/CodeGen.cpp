@@ -146,6 +146,11 @@ namespace ZCompiler {
         }
 
         if (auto* bin = dynamic_cast<const BinaryExpr*>(&expr)) {
+            // Must be intercepted before either operand is generated: the whole
+            // point is that the right-hand side is not always evaluated.
+            if (bin->op == "&&" || bin->op == "||")
+                return genShortCircuit(*bin);
+
             llvm::Value* lhs = genExpr(*bin->lhs);
             llvm::Value* rhs = genExpr(*bin->rhs);
 
@@ -192,19 +197,8 @@ namespace ZCompiler {
             if (bin->op == ">=") 
                 return isFloatOp ? builder_.CreateFCmpOGE(lhs,rhs) : builder_.CreateICmpSGE(lhs,rhs);
 
-            if (bin->op == "&&") {
-                llvm::Value* lb = toBoolValue(lhs);
-                llvm::Value* rb = toBoolValue(rhs);
-
-                return builder_.CreateAnd(lb, rb);
-            }
-            if (bin->op == "||") {
-                llvm::Value* lb = toBoolValue(lhs);
-                llvm::Value* rb = toBoolValue(rhs);
-                
-                return builder_.CreateOr(lb, rb);
-            }
-
+            // `&&` and `||` never reach here — genExpr routes them to
+            // genShortCircuit before the operands are evaluated.
             throw std::runtime_error("codegen: unknown binary operator '" + bin->op + "'");
         }
 
@@ -282,6 +276,36 @@ namespace ZCompiler {
 
         llvm::Value* fmtStr = builder_.CreateGlobalString(fmt, "fmt");
         return builder_.CreateCall(printf_, {fmtStr, arg});
+    }
+
+    llvm::Value* CodeGen::genShortCircuit(const BinaryExpr& bin) {
+        const bool isAnd = (bin.op == "&&");
+
+        llvm::Function* fn = builder_.GetInsertBlock()->getParent();
+        llvm::Value* lhsBool = toBoolValue(genExpr(*bin.lhs));
+        llvm::BasicBlock* lhsEnd = builder_.GetInsertBlock();
+
+        llvm::BasicBlock* rhsBB   = llvm::BasicBlock::Create(ctx_, isAnd ? "and.rhs" : "or.rhs", fn);
+        llvm::BasicBlock* mergeBB = llvm::BasicBlock::Create(ctx_, isAnd ? "and.end" : "or.end", fn);
+
+        if (isAnd)
+            builder_.CreateCondBr(lhsBool, rhsBB, mergeBB);
+        else
+            builder_.CreateCondBr(lhsBool, mergeBB, rhsBB);
+
+        builder_.SetInsertPoint(rhsBB);
+        llvm::Value* rhsBool = toBoolValue(genExpr(*bin.rhs));
+        llvm::BasicBlock* rhsEnd = builder_.GetInsertBlock();
+
+        builder_.CreateBr(mergeBB);
+        builder_.SetInsertPoint(mergeBB);
+
+        llvm::Type* boolTy = llvm::Type::getInt1Ty(ctx_);
+        llvm::PHINode* phi = builder_.CreatePHI(boolTy, 2, isAnd ? "andtmp" : "ortmp");
+
+        phi->addIncoming(llvm::ConstantInt::get(boolTy, isAnd ? 0 : 1), lhsEnd);
+        phi->addIncoming(rhsBool, rhsEnd);
+        return phi;
     }
 
     llvm::Value* CodeGen::toBoolValue(llvm::Value* v) {
