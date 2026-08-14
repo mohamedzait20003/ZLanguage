@@ -21,10 +21,12 @@
 set -u
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-WORK="$ROOT/build/testwork"
 
-ZC="$ROOT/build/zc.exe"
-[ -x "$ZC" ] || ZC="$ROOT/build/zc"
+BUILD_DIR="${ZBUILD:-build}"
+WORK="$ROOT/$BUILD_DIR/testwork"
+
+ZC="$ROOT/$BUILD_DIR/zc.exe"
+[ -x "$ZC" ] || ZC="$ROOT/$BUILD_DIR/zc"
 
 if [ ! -x "$ZC" ]; then
     echo "error: compiler not found at $ZC"
@@ -32,8 +34,8 @@ if [ ! -x "$ZC" ]; then
     exit 1
 fi
 
-if [ -f "$ROOT/build/llvm_bin_dir.txt" ]; then
-    LLVM_BIN="$(tr -d '\r\n' < "$ROOT/build/llvm_bin_dir.txt")"
+if [ -f "$ROOT/$BUILD_DIR/llvm_bin_dir.txt" ]; then
+    LLVM_BIN="$(tr -d '\r\n' < "$ROOT/$BUILD_DIR/llvm_bin_dir.txt")"
 
     if [ -n "$LLVM_BIN" ]; then
         if command -v cygpath >/dev/null 2>&1; then

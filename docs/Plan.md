@@ -70,15 +70,15 @@ d:\Projects\ZLanguage\
 │   ├── Parser.cpp
 │   ├── Sema.cpp
 │   ├── CodeGen.cpp
-│   ├── Mangler.cpp
-│   └── MLIR/             # M17+ only, built when -DZ_ENABLE_MLIR=ON
-│       ├── ZDialect.td       # TableGen definition of the `z` dialect
-│       ├── ZDialect.cpp      # Generated-code glue + custom op verifiers
+│   └── Mangler.cpp
+├── Runtime/              # Everything belonging to compiled programs, not to zc
+│   ├── Headers/          # zstring.h, zdynamic.h, zgc.h, zruntime.h, ztensor.h
+│   ├── Main/             # zstring.c, zdynamic.c, zgc.c, zruntime.c, ztensor.c
+│   └── MLIR/             # M17a+ only, built when -DZ_ENABLE_MLIR=ON
+│       ├── ZOps.td           # TableGen definition of the `z` dialect
+│       ├── ZDialect.h/.cpp   # Generated-code glue + custom op verifiers
 │       ├── TensorEmitter.cpp # Z AST tensor exprs -> `z` dialect ops
 │       └── Pipeline.cpp      # z -> linalg -> bufferize -> scf -> llvm pass pipeline
-├── Runtime/              # C runtime linked into every compiled program
-│   ├── Headers/          # zstring.h, zdynamic.h, zgc.h, zruntime.h, ztensor.h
-│   └── Main/             # zstring.c, zdynamic.c, zgc.c, zruntime.c, ztensor.c
 ├── Test/
 │   ├── run_tests.sh      # Suite runner — discovers tests by file layout
 │   ├── codegen/          # .z + .expected — compile, run, compare stdout.
@@ -1648,12 +1648,12 @@ String literals are flagged "always reachable" in their header (or stored in a s
 **Prerequisite (do this first, as its own commit):** install MLIR and take the LLVM version bump it forces (see the prerequisite section at the top of this document). Verify `zc` still builds and every earlier milestone's example still runs *before* writing any MLIR code. An LLVM major-version bump touching `CodeGen.cpp` and `main.cpp` at the same time as new MLIR work is the single most likely way to lose a week here.
 
 **Build integration:**
-- `option(Z_ENABLE_MLIR "Build the MLIR tensor backend" OFF)` — everything in this milestone is behind it, and `Src/MLIR/*` is only added to the target when it is `ON`.
+- `option(Z_ENABLE_MLIR "Build the MLIR tensor backend" OFF)` — everything in this milestone is behind it, and `Runtime/MLIR/*` is only added to the target when it is `ON`.
 - `find_package(MLIR REQUIRED CONFIG)`, then `list(APPEND CMAKE_MODULE_PATH "${MLIR_CMAKE_DIR}" "${LLVM_CMAKE_DIR}")` and `include(AddMLIR)` / `include(TableGen)`.
 - `mlir_tablegen(ZOps.h.inc -gen-op-decls)` / `(ZOps.cpp.inc -gen-op-defs)` / `(ZDialect.h.inc -gen-dialect-decls)` over `ZDialect.td`, wrapped in `add_public_tablegen_target(ZDialectIncGen)` and added as a dependency of `zc`.
 - Link `MLIRIR MLIRParser MLIRSupport MLIRPass MLIRTransforms MLIRFuncDialect MLIRArithDialect MLIRSCFDialect MLIRMemRefDialect MLIRLinalgDialect MLIRTensorDialect MLIRBufferizationDialect MLIRLLVMDialect MLIRToLLVMIRTranslationRegistration MLIRTargetLLVMIRExport`.
 
-**The `z` dialect (`Src/MLIR/ZDialect.td`):** deliberately tiny. It exists to hold Z-level semantics that have no faithful `linalg` spelling *at the point of emission* — not to be a full tensor IR. In M17a it defines exactly one op:
+**The `z` dialect (`Runtime/MLIR/ZOps.td`):** deliberately tiny. It exists to hold Z-level semantics that have no faithful `linalg` spelling *at the point of emission* — not to be a full tensor IR. In M17a it defines exactly one op:
 
 ```tablegen
 def Z_AddOp : Z_Op<"add", [Pure, SameOperandsAndResultType]> {
@@ -1664,7 +1664,7 @@ def Z_AddOp : Z_Op<"add", [Pure, SameOperandsAndResultType]> {
 
 Later milestones add `z.broadcast_binop`, `z.matmul`, `z.reduce`, `z.device_to` — each with a documented lowering. **Rule: an op earns a place in the `z` dialect only if lowering it eagerly to `linalg` at emission time would lose information a later pass needs.** Anything else is emitted as `linalg`/`arith`/`tensor` directly. A bloated custom dialect is how this decision goes wrong.
 
-**The pipeline (`Src/MLIR/Pipeline.cpp`):** the lowering chain M17b–M22 all build on, established here for one op.
+**The pipeline (`Runtime/MLIR/Pipeline.cpp`):** the lowering chain M17b–M22 all build on, established here for one op.
 
 ```
 z dialect
@@ -2666,7 +2666,7 @@ if(Z_ENABLE_MLIR)
     list(APPEND CMAKE_MODULE_PATH "${MLIR_CMAKE_DIR}" "${LLVM_CMAKE_DIR}")
     include(AddMLIR)
     include(TableGen)
-    add_subdirectory(Src/MLIR)
+    add_subdirectory(Runtime/MLIR)
     target_link_libraries(zc PRIVATE ZMLIR)
     target_compile_definitions(zc PRIVATE Z_ENABLE_MLIR=1)
 endif()
@@ -2819,7 +2819,7 @@ After each milestone:
 - `Include/AST.h` — central data structure connecting parser → sema → codegen; holds `TypeRef`, which every milestone extends
 - `Src/CodeGen.cpp` — most complex file, LLVM C++ API usage, where most learning happens
 - `Src/main.cpp` — orchestrates the pipeline, implements debug flags, shells out to the linker
-- `Src/MLIR/Pipeline.cpp` — from M17a, the second-most complex file: owns the lowering pass pipeline and the MLIR → LLVM module merge
+- `Runtime/MLIR/Pipeline.cpp` — from M17a, the second-most complex file: owns the lowering pass pipeline and the MLIR → LLVM module merge
 
 ---
 

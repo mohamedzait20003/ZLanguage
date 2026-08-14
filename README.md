@@ -105,15 +105,100 @@ ZOPT="-O0 -O2" ./Test/run_tests.sh
 
 `zc` also re-verifies the module after the pipeline, so a pass that produces malformed IR is caught at compile time rather than becoming a mysterious runtime failure.
 
+## LLVM IR optimisation
+
+`zc` does not implement its own optimiser. It emits deliberately naive IR — every variable is a stack slot, every expression is a fresh instruction — and hands it to LLVM's stock `PassBuilder` pipeline, selected by `-O0`/`-O1`/`-O2`/`-O3`. `-O2` is the default. This section records what those passes actually do to Z programs, measured on the checked-in test suite.
+
+### Measured effect
+
+Counts from `zc -O<n> --emit-llvm` over `Test/codegen/`:
+
+| Program | Level | IR lines | `alloca` | blocks | `load` | calls |
+|---|---|---:|---:|---:|---:|---:|
+| m1_variables | O0 | 29 | 3 | 1 | 4 | 2 |
+| | O1–O3 | 19 | **0** | 1 | **0** | 2 |
+| m3_types | O0 | 217 | 22 | 14 | 38 | 30 |
+| | O1–O3 | 83 | **0** | 5 | **0** | 24 |
+| loop_control | O0 | 304 | 12 | 59 | 34 | 10 |
+| | O1–O3 | 34 | **0** | **2** | **0** | 8 |
+| short_circuit | O0 | 282 | 3 | 59 | 8 | 22 |
+| | O1–O3 | 41 | **0** | **2** | **0** | 17 |
+| all_paths_return | O0 | 112 | 4 | 18 | 5 | 14 |
+| | O1–O3 | 58 | **0** | 5 | **0** | 7 |
+| m2_control_flow | O0 | 591 | 26 | 96 | 60 | 54 |
+| | O1 | 136 | 0 | 11 | 0 | 41 |
+| | O2–O3 | 188 | 0 | 14 | 0 | 41 |
+
+Three things stand out:
+
+- **Every `alloca` and every `load` disappears at `-O1`.** This is `sroa`/mem2reg promoting stack slots to SSA registers, and it is the single largest transformation applied to Z output. It only works because `CodeGen` places all allocas in the function entry block — the convention exists precisely to keep them promotable.
+- **`-O1` already does nearly everything.** For five of the six programs `-O2` and `-O3` are byte-identical to `-O1`. Z programs at this stage are too simple to exercise the extra passes.
+- **`-O2` output is sometimes *larger* than `-O1`** (m2_control_flow, 136 → 188 lines). That is not a regression: `-O2` inlines and unrolls more aggressively, trading size for speed. Line count is a proxy for work done, not for quality.
+
+### Passes applied
+
+LLVM 22's default pipelines contain **64 passes at `-O1`, 76 at `-O2`, and 79 at `-O3`**. Grouped by what they do to Z output:
+
+**Memory to registers** — the dominant win
+`sroa` (scalar replacement of aggregates / mem2reg), `early-cse` (common subexpression elimination, memory-SSA aware at O2+), `memcpyopt`, `dse` (dead store elimination, O2+), `mldst-motion` (merged load/store motion, O2+), `licm` (loop-invariant code motion), `infer-alignment`, `alignment-from-assumptions`.
+
+**Instruction-level simplification**
+`instcombine` (peephole rewriting), `aggressive-instcombine` (O2+), `instsimplify`, `reassociate`, `constraint-elimination` (O2+), `correlated-propagation` (O2+), `div-rem-pairs`, `float2int`, `lower-constant-intrinsics`.
+
+**Constant propagation and dead code**
+`ipsccp` (interprocedural sparse conditional constant propagation), `sccp`, `called-value-propagation`, `adce` (aggressive dead code elimination), `bdce` (bit-tracking DCE), `globaldce`, `globalopt`, `constmerge`, `deadargelim`, `elim-avail-extern`.
+
+**Control-flow restructuring**
+`simplifycfg` (block merging, branch folding — this is what erases the unreachable blocks `break`/`continue` leave behind), `jump-threading` (O2+), `speculative-execution` (O2+), `chr` (control-height reduction, O3 only), `callsite-splitting` (O3 only).
+
+**Loops**
+`loop-rotate`, `loop-simplifycfg`, `loop-deletion`, `loop-unroll`, `loop-unroll-full`, `simple-loop-unswitch`, `indvars` (induction variable simplification), `loop-sink`, `loop-distribute`, `loop-load-elim`.
+
+**Vectorisation**
+`loop-vectorize`, `slp-vectorizer` (superword-level parallelism, O2+), `vector-combine`.
+
+**Interprocedural**
+`always-inline` and the CGSCC `inliner`, `function-attrs`, `rpo-function-attrs`, `inferattrs`, `argpromotion` (O3 only), `tailcallelim`, `gvn` (global value numbering, O2+).
+
+**What `-O2` adds over `-O1`** (12 passes): `aggressive-instcombine`, `constraint-elimination`, `correlated-propagation`, `dse`, `extra-simple-loop-unswitch-passes`, `gvn`, `jump-threading`, `mldst-motion`, `move-auto-init`, `openmp-opt-cgscc`, `slp-vectorizer`, `speculative-execution`.
+
+**What `-O3` adds over `-O2`** (3 passes): `argpromotion`, `callsite-splitting`, `chr`.
+
+### Worked example
+
+`Test/codegen/loop_control.z` collapses from 304 IR lines and 59 basic blocks to 34 lines and 2 blocks. Every loop has a compile-time-known trip count, so `indvars` + `loop-unroll-full` + `ipsccp` + `instcombine` evaluate them entirely at compile time:
+
+```llvm
+define noundef i32 @main() local_unnamed_addr #0 {
+entry:
+  %0 = tail call i32 (ptr, ...) @printf(ptr @fmt.8, i64 3)
+  %1 = tail call i32 (ptr, ...) @printf(ptr @fmt.8, i64 30)
+  %2 = tail call i32 (ptr, ...) @printf(ptr @fmt.8, i64 2)
+  ...
+  ret i32 0
+}
+```
+
+This doubles as an independent check on the `break`/`continue` lowering: LLVM computed those loop results symbolically, and the constants it produced match the hand-written `.expected` file. Wrong loop-exit edges would have folded to different numbers.
+
+### A known limitation in what we emit
+
+`CodeGen::genFnDecl` gives every function `ExternalLinkage`, including ones only called locally. LLVM therefore cannot delete a function even after inlining it into every caller. In `all_paths_return.z` at `-O2`, all four helpers are fully inlined and constant-folded into `main` — which becomes seven `printf` calls with literal arguments — yet all four definitions survive as unreachable code.
+
+Marking non-`main` functions `internal` would let `globaldce` remove them and would unlock `deadargelim` and `argpromotion`, which currently have nothing to work on. This is a real missed optimisation, not a correctness issue, and it is listed under Known gaps.
+
 ## Layout
 
 ```
 Include/        Headers — Token, AST, Lexer, Parser, Sema, CodeGen
 Src/            Implementations + the driver (main.cpp)
-Runtime/        C runtime linked into compiled programs (empty until M3)
+Runtime/        Everything linked into or lowered for compiled programs
+  MLIR/         The `z` dialect and lowering pipeline (M17a+, opt-in)
 Test/           run_tests.sh, codegen/ and sema/ suites
 docs/Plan.md    Design, milestones, and architectural decisions
 ```
+
+`Runtime/` holds what belongs to compiled programs rather than to the compiler: the C runtime (from M3) and the MLIR tensor backend (from M17a). Building the latter requires `-DZ_ENABLE_MLIR=ON`.
 
 The pipeline is the conventional one: `Lexer` → `Parser` → `Sema` → `CodeGen` → LLVM IR → object file → `clang` for linking.
 
@@ -125,6 +210,7 @@ Two invariants worth knowing before touching the middle of it:
 
 ## Known gaps
 
+- **Every function is emitted with `ExternalLinkage`**, so LLVM cannot delete one even after inlining it everywhere, and the interprocedural passes that depend on knowing all callers (`deadargelim`, `argpromotion`) have nothing to work on. Marking non-`main` functions `internal` in `genFnDecl` would fix this. See the LLVM IR optimisation section for a measured example.
 - `--dump-ast` only handles a handful of node types; control-flow and M3 expression nodes print as `UnknownStmt` / `UnknownExpr`. There is no parser test suite until this is fixed, since it would otherwise lock in incorrect output.
 - `Include/Types.h` is empty and `TypeRef` is a flat enum in `AST.h`. It cannot represent parameterised types (`vector<int>`, `tensor<float, 2, 2>`) and will need to become a structured type before M11.
 - `int128` values print via truncation to 64 bits.

@@ -35,6 +35,26 @@ else()
     target_link_libraries(zc PRIVATE ${llvm_libs})
 endif()
 
+# ---------------------------------------------------------------------------
+# MLIR tensor backend
+# ---------------------------------------------------------------------------
+option(Z_ENABLE_MLIR "Build the MLIR tensor backend (M17a+)" OFF)
+
+if(Z_ENABLE_MLIR)
+    find_package(MLIR REQUIRED CONFIG)
+    message(STATUS "Found MLIR at ${MLIR_DIR}")
+
+    list(APPEND CMAKE_MODULE_PATH "${MLIR_CMAKE_DIR}" "${LLVM_CMAKE_DIR}")
+    include(TableGen)
+    include(AddLLVM)
+    include(AddMLIR)
+
+    add_subdirectory(Runtime/MLIR)
+
+    target_link_libraries(zc PRIVATE ZMLIR)
+    target_compile_definitions(zc PRIVATE Z_ENABLE_MLIR=1)
+endif()
+
 # `cmake --build build --target check` runs the whole suite.
 # Test/run_tests.sh can also be invoked directly, optionally with a name filter.
 find_program(BASH_PROGRAM bash)
