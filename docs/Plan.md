@@ -71,9 +71,18 @@ d:\Projects\ZLanguage\
 │   ├── Sema.cpp
 │   ├── CodeGen.cpp
 │   └── Mangler.cpp
-├── Runtime/              # Everything belonging to compiled programs, not to zc
-│   ├── Headers/          # zstring.h, zdynamic.h, zgc.h, zruntime.h, ztensor.h
-│   ├── Main/             # zstring.c, zdynamic.c, zgc.c, zruntime.c, ztensor.c
+├── Runtime/              # Everything belonging to compiled programs, not to zc.
+│   │                     # One directory per package: headers, sources and the
+│   │                     # package's own CMakeLists live together. A package is
+│   │                     # added to a milestone by adding one subdirectory, not
+│   │                     # by editing a shared header and a shared source dir.
+│   ├── CMakeLists.txt    # Aggregates the packages below into the zruntime target
+│   ├── String/           # M3  — zstring.h/.c   ZString, concat, compare
+│   ├── Dynamic/          # M3  — zdynamic.h/.c  boxing, unboxing, tag dispatch
+│   ├── GC/               # M14 — zgc.h/.c       mark-and-sweep, shadow stack
+│   ├── Structures/       # M11 — zstructures.h/.c  generic containers
+│   ├── Tensor/           # M17b— ztensor.h/.c   ZTensor, factories, LAPACK calls
+│   │                     #       zdevice.h      device dispatch vtable (M20)
 │   └── MLIR/             # M17a+ only, built when -DZ_ENABLE_MLIR=ON
 │       ├── ZOps.td           # TableGen definition of the `z` dialect
 │       ├── ZDialect.h/.cpp   # Generated-code glue + custom op verifiers
@@ -687,7 +696,7 @@ do {
 
 *Infrastructure the milestone forces:*
 
-13. **There is no runtime library and no way to link one.** `Runtime/Headers/` and `Runtime/Main/` are empty directories, and the driver's link step is `clang <obj> -o <exe>` with nothing else. M3 is the first milestone that needs C runtime code, so `zruntime` and the driver's link line both have to exist before items 10 and 11 can be tested. See the CMakeLists notes in Key Implementation Details.
+13. **There is no runtime library and no way to link one.** `Runtime/` contains only the MLIR package, with no C runtime packages yet, and the driver's link step is `clang <obj> -o <exe>` with nothing else. M3 is the first milestone that needs C runtime code, so `zruntime` and the driver's link line both have to exist before items 10 and 11 can be tested. See the CMakeLists notes in Key Implementation Details.
 14. **`Test/` is empty.** No test runner, no expected-output files, nothing to catch regressions. M3 roughly triples the type-interaction surface — the point at which "run the example and eyeball it" stops working. Stand up the `Test/{lexer,parser,sema,codegen}` layout and the runner from the Testing Strategy section as part of this milestone.
 15. **`--dump-ast` is stale.** It handles only `Return` / `Expr` / `Let` / `Assign` statements and four expression kinds; every M2 control-flow node and every M3 expression prints as `UnknownStmt` / `UnknownExpr`, which makes it useless for exactly the tests item 14 introduces.
 16. **`Include/Types.h` is empty and `TypeRef` lives in `AST.h`.** A flat enum is already strained by `float32`/`float` synonyms, and it cannot represent `vector<int>` (M11) or `tensor<float, 2, 2>` (M17b) at all. M3 does not require the full `GenericType` node from the generics decision, but it is the right moment to move type representation into `Types.h` behind a small struct so the later change is additive rather than a rewrite of every `switch` in Sema and CodeGen.
@@ -1713,7 +1722,7 @@ tensor<T, d0, d1, ..., dN>    # pin the shape at compile time — enables static
 
 Static shapes are not just a compile-time check: they become *static dimensions in the MLIR type* (`tensor<2x2xf32>` rather than `tensor<?x?xf32>`), which is what lets M22 tile, vectorize, and unroll without any new codegen. Dynamic-shape tensors emit `tensor<?x?xf32>` and carry their dims as SSA values.
 
-**Runtime representation (`Runtime/Headers/ztensor.h`, `Runtime/Main/ztensor.c`):**
+**Runtime representation (`Runtime/Tensor/ztensor.h`, `Runtime/Tensor/ztensor.c`):**
 The struct is defined with *all* fields that later milestones will need, so M19/M20 don't require ABI breaks — but the autograd and device fields are inert in M17b. MLIR does not see this struct: the runtime owns allocation, lifetime, and metadata, while MLIR-generated kernels operate on the raw buffer `data` points at, received as a `memref` descriptor. That split is what keeps the GC and the ABI out of the lowering pipeline.
 ```c
 typedef struct ZTensor {
@@ -1757,7 +1766,7 @@ Lifetime is handled by the tracing GC from M14 — tensors are ordinary GC-manag
 - **`.matmul()` / `.dot()`** — `linalg.matmul` / `linalg.dot`. On CPU the default pipeline lowers these to loops; M22 tiles and vectorizes them.
 - **Shape ops** — `.reshape()` → `tensor.reshape`, `.transpose()` → `linalg.transpose`, `.slice()` → `tensor.extract_slice`, `.get()`/`.set()` → `tensor.extract`/`tensor.insert`.
 
-*Stays in the C runtime (`Runtime/Main/ztensor.c`):*
+*Stays in the C runtime (`Runtime/Tensor/ztensor.c`):*
 - **Allocation, `ZTensor` construction, shape/stride metadata, dtype tags, GC integration** — the runtime owns the object; MLIR only sees buffers.
 - **Factories** `.zeros()`, `.ones()`, `.randn()`, `.eye()` — allocation plus a fill; not worth a lowering path. `.randn()` needs an RNG the pipeline has no business owning.
 - **`.inverse()`, `.solve()`, `.det()`** — call into LAPACK (or a hand-written Cholesky/LU in C). `linalg` has no factorization ops and writing pivoting logic as `linalg.generic` is a bad trade. This is a documented, deliberate escape hatch — the same "the language can't express it yet" exception the stdlib-hosting decision allows.
@@ -1895,7 +1904,7 @@ There are no `.cu` files to write for elementwise ops, reductions, or activation
 
 **Implementation:**
 - Activate the `device` field on `ZTensor`. `t.to(CUDA)` calls `cudaMalloc` + `cudaMemcpy`; `t.to(CPU)` is the reverse. The data pointer's interpretation depends on `device`. This is runtime C code, unchanged in character from M17b.
-- **Device-abstraction layer (`Runtime/Headers/zdevice.h`):** all GPU ops go through a `ZDeviceOps` vtable indexed by `device`. M20 fills in the CUDA slot; M21 fills in the ROCm slot. The dispatcher is `dispatch_op(device, op_kind, args)`. Under MLIR this vtable dispatches *compiled kernel launches and library calls*, not forty hand-written implementations — but the indirection stays, because the runtime still needs one place to decide CPU-vs-device.
+- **Device-abstraction layer (`Runtime/Tensor/zdevice.h`):** all GPU ops go through a `ZDeviceOps` vtable indexed by `device`. M20 fills in the CUDA slot; M21 fills in the ROCm slot. The dispatcher is `dispatch_op(device, op_kind, args)`. Under MLIR this vtable dispatches *compiled kernel launches and library calls*, not forty hand-written implementations — but the indirection stays, because the runtime still needs one place to decide CPU-vs-device.
 - **Generated kernels:** elementwise ops, broadcasting, reductions, activations, normalization, and their backward counterparts all come out of the `linalg` → `gpu` → `nvvm` pipeline above. The `z` dialect and `linalg` emission from M17b/M19 are unchanged — only the pass pipeline differs, selected by the target device.
 - **Library-backed ops:** `matmul` links to cuBLAS (`sgemm`/`dgemm`/`hgemm` for fp16) rather than using a generated kernel — a generated `linalg.matmul` will not beat cuBLAS, and pretending otherwise wastes the milestone. Keep the generated path behind a flag for comparison; it is a genuinely instructive benchmark. cuDNN is linked and used for softmax and activations; conv waits for M28.
 - **A hand-written `.cu` file is an escape hatch, not the pattern.** If a specific op lowers badly, write the kernel and document why — the same exception structure the stdlib-hosting decision uses. If this starts happening often, the `gpu`-dialect approach is failing and that is worth knowing early.
@@ -2648,15 +2657,21 @@ llvm_map_components_to_libnames(llvm_libs core support irreader codegen mc mcpar
 target_link_libraries(zc PRIVATE ${llvm_libs})
 ```
 
-From M3 the compiled program also links the C runtime, so add:
+From M3 the compiled program also links the C runtime. Each runtime package owns its sources; `Runtime/CMakeLists.txt` aggregates them:
 ```cmake
+# Runtime/CMakeLists.txt — one entry per package, added as milestones land
 add_library(zruntime STATIC
-    Runtime/Main/zstring.c
-    Runtime/Main/zdynamic.c)
-target_include_directories(zruntime PUBLIC Runtime/Headers)
+    String/zstring.c
+    Dynamic/zdynamic.c)
+
+# Packages include each other as "String/zstring.h", so the include root is
+# Runtime/ itself. Headers stay next to the sources that implement them.
+target_include_directories(zruntime PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
 set_target_properties(zruntime PROPERTIES C_STANDARD 11)
 ```
 `zruntime` is *not* linked into `zc` — it is linked into the programs `zc` produces. The driver's link step becomes `clang <obj> <path-to-libzruntime.a> -o <exe>`, so `main.cpp` needs to know that path (pass it as a compile definition from CMake rather than hardcoding it).
+
+Adding a runtime package is one directory plus one line here. Nothing outside the package needs editing, which is the point of the layout: `Runtime/Headers` + `Runtime/Main` would have forced every milestone to touch two shared directories and would have separated each header from the code implementing it.
 
 From M17a, MLIR is added behind an option (see M17a for the full pass and library list):
 ```cmake

@@ -107,7 +107,11 @@ ZOPT="-O0 -O2" ./Test/run_tests.sh
 
 ## LLVM IR optimisation
 
-`zc` does not implement its own optimiser. It emits deliberately naive IR — every variable is a stack slot, every expression is a fresh instruction — and hands it to LLVM's stock `PassBuilder` pipeline, selected by `-O0`/`-O1`/`-O2`/`-O3`. `-O2` is the default. This section records what those passes actually do to Z programs, measured on the checked-in test suite.
+`zc` does not implement its own optimiser. It emits deliberately naive IR — every variable is a stack slot, every expression a fresh instruction — and hands it to LLVM's stock `PassBuilder` pipeline, selected by `-O0`/`-O1`/`-O2`/`-O3`. `-O2` is the default.
+
+Verified to fire on Z code today: **mem2reg (promotion of memory to registers)**, **constant folding**, **sparse conditional constant propagation**, **function inlining**, **dead code elimination**, **CFG simplification / branch folding**, **full loop unrolling**, **loop-invariant code motion**, **induction-variable simplification and loop deletion via scalar evolution**, **common subexpression elimination**, **reassociation**, **strength reduction**, and **tail call optimisation**.
+
+The rest of this section is the measurement behind that claim: what changes, which pass does it, and the reproducible evidence for each.
 
 ### Measured effect
 
@@ -135,38 +139,40 @@ Three things stand out:
 - **`-O1` already does nearly everything.** For five of the six programs `-O2` and `-O3` are byte-identical to `-O1`. Z programs at this stage are too simple to exercise the extra passes.
 - **`-O2` output is sometimes *larger* than `-O1`** (m2_control_flow, 136 → 188 lines). That is not a regression: `-O2` inlines and unrolls more aggressively, trading size for speed. Line count is a proxy for work done, not for quality.
 
-### Passes applied
+### Techniques applied, and evidence each one fires
 
-LLVM 22's default pipelines contain **64 passes at `-O1`, 76 at `-O2`, and 79 at `-O3`**. Grouped by what they do to Z output:
+LLVM 22's default pipelines contain **64 passes at `-O1`, 76 at `-O2`, 79 at `-O3`**. The table below names the classical optimisation each relevant pass implements, and — because a list of pass names proves nothing on its own — the observed effect on this project's own code. Every "evidence" entry below was reproduced with `zc --emit-llvm`, `opt -pass-remarks`, or both.
 
-**Memory to registers** — the dominant win
-`sroa` (scalar replacement of aggregates / mem2reg), `early-cse` (common subexpression elimination, memory-SSA aware at O2+), `memcpyopt`, `dse` (dead store elimination, O2+), `mldst-motion` (merged load/store motion, O2+), `licm` (loop-invariant code motion), `infer-alignment`, `alignment-from-assumptions`.
+| # | Technique | LLVM pass | Evidence in this project |
+|---|---|---|---|
+| 1 | **Promotion of memory to registers** (mem2reg) | `sroa` | `m3_types.z`: 22 `alloca` + 38 `load` at `-O0` → **0 and 0** at `-O1`. Works only because `CodeGen` emits allocas in the entry block. |
+| 2 | **Constant folding** | `instcombine`, `instsimplify` | `strength(5)`, `cse(3,4)` fold to literals at their call sites. |
+| 3 | **Constant propagation** (sparse conditional, interprocedural) | `sccp`, `ipsccp`, `called-value-propagation` | `all_paths_return.z` `main` becomes 7 `printf` calls with literal arguments — every helper's return value propagated through. |
+| 4 | **Function inlining** | `inliner`, `always-inline` | `opt -pass-remarks` on `m2_control_flow.z` reports `day_name` inlined ×4, `is_even` ×3, plus `min`, `max`, `factorial`, `abs`. |
+| 5 | **Dead code elimination** | `adce`, `bdce`, `dce` | `loop_control.z`: 59 basic blocks → **2**. Includes the unreachable blocks `break`/`continue` deliberately leave behind. |
+| 6 | **Control-flow graph simplification** (branch folding, block merging) | `simplifycfg` | `short_circuit.z`: 59 blocks → 2. The `and.rhs`/`or.rhs` blocks collapse once the branch condition is known. |
+| 7 | **Loop unrolling** (full) | `loop-unroll`, `loop-unroll-full` | `opt -pass-remarks` on `loop_control.z` reports a loop `unrolled`; all fixed-trip-count loops vanish. |
+| 8 | **Loop-invariant code motion** | `licm` | Probe `licm(n, k)`: `k * 8` inside the loop is hoisted out entirely. |
+| 9 | **Induction-variable simplification / scalar evolution** | `indvars`, `loop-deletion` | Same probe: the accumulation loop is replaced by the closed form `(k * n) << 3` and **deleted**. See below. |
+| 10 | **Common subexpression elimination** | `early-cse`, `gvn` (O2+) | Probe `a*b + a*b` → the product is computed once. |
+| 11 | **Reassociation** | `reassociate` | Same probe: `a*b + a*b` is refactored to `2*a*b` before strength reduction. |
+| 12 | **Strength reduction** | `instcombine` | `x * 8` → `shl i64 %x, 3`. `a*b*2` → `shl i64 %a, 1` then multiply. |
+| 13 | **Tail call optimisation** | `tailcallelim` | 41 `tail call` markers in `m2_control_flow.z` at `-O2`. |
+| 14 | **Dead store elimination** | `dse` (O2+) | In the pipeline; **no observed effect** on Z output — `sroa` removes every store to a stack slot first, leaving nothing for it to do. |
+| 15 | **Global value numbering** | `gvn` (O2+) | In the pipeline; **no observed effect** beyond what `early-cse` already achieves at this program size. |
+| 16 | **Jump threading** | `jump-threading` (O2+) | In the pipeline; **no measured effect** on the current suite. |
+| 17 | **Vectorisation** (loop and superword-level) | `loop-vectorize`, `slp-vectorizer` (O2+) | In the pipeline; **does not fire** — zero vector types across all 9 programs at `-O2` and `-O3`. Nothing to vectorise until `structures` (M11) and `tensor` (M17b) introduce aggregates. |
+| 18 | **Interprocedural argument optimisation** | `deadargelim`, `argpromotion` (O3) | In the pipeline; **cannot fire** — see the linkage limitation below. |
 
-**Instruction-level simplification**
-`instcombine` (peephole rewriting), `aggressive-instcombine` (O2+), `instsimplify`, `reassociate`, `constraint-elimination` (O2+), `correlated-propagation` (O2+), `div-rem-pairs`, `float2int`, `lower-constant-intrinsics`.
-
-**Constant propagation and dead code**
-`ipsccp` (interprocedural sparse conditional constant propagation), `sccp`, `called-value-propagation`, `adce` (aggressive dead code elimination), `bdce` (bit-tracking DCE), `globaldce`, `globalopt`, `constmerge`, `deadargelim`, `elim-avail-extern`.
-
-**Control-flow restructuring**
-`simplifycfg` (block merging, branch folding — this is what erases the unreachable blocks `break`/`continue` leave behind), `jump-threading` (O2+), `speculative-execution` (O2+), `chr` (control-height reduction, O3 only), `callsite-splitting` (O3 only).
-
-**Loops**
-`loop-rotate`, `loop-simplifycfg`, `loop-deletion`, `loop-unroll`, `loop-unroll-full`, `simple-loop-unswitch`, `indvars` (induction variable simplification), `loop-sink`, `loop-distribute`, `loop-load-elim`.
-
-**Vectorisation**
-`loop-vectorize`, `slp-vectorizer` (superword-level parallelism, O2+), `vector-combine`.
-
-**Interprocedural**
-`always-inline` and the CGSCC `inliner`, `function-attrs`, `rpo-function-attrs`, `inferattrs`, `argpromotion` (O3 only), `tailcallelim`, `gvn` (global value numbering, O2+).
+Entries 14–18 are listed because they are genuinely in the pipeline and will matter as the language grows, but nothing in the current test suite demonstrates them. Rows 1–13 are the ones with reproducible evidence today.
 
 **What `-O2` adds over `-O1`** (12 passes): `aggressive-instcombine`, `constraint-elimination`, `correlated-propagation`, `dse`, `extra-simple-loop-unswitch-passes`, `gvn`, `jump-threading`, `mldst-motion`, `move-auto-init`, `openmp-opt-cgscc`, `slp-vectorizer`, `speculative-execution`.
 
-**What `-O3` adds over `-O2`** (3 passes): `argpromotion`, `callsite-splitting`, `chr`.
+**What `-O3` adds over `-O2`** (3 passes): `argpromotion`, `callsite-splitting`, `chr` (control-height reduction).
 
-### Worked example
+### Two worked examples
 
-`Test/codegen/loop_control.z` collapses from 304 IR lines and 59 basic blocks to 34 lines and 2 blocks. Every loop has a compile-time-known trip count, so `indvars` + `loop-unroll-full` + `ipsccp` + `instcombine` evaluate them entirely at compile time:
+**Whole-loop constant folding.** `Test/codegen/loop_control.z` collapses from 304 IR lines and 59 basic blocks to 34 lines and 2 blocks. Every loop has a compile-time-known trip count, so unrolling plus constant propagation evaluates them entirely at compile time:
 
 ```llvm
 define noundef i32 @main() local_unnamed_addr #0 {
@@ -179,7 +185,34 @@ entry:
 }
 ```
 
-This doubles as an independent check on the `break`/`continue` lowering: LLVM computed those loop results symbolically, and the constants it produced match the hand-written `.expected` file. Wrong loop-exit edges would have folded to different numbers.
+This doubles as an independent check on the `break`/`continue` lowering: LLVM computed those loop results symbolically, and the constants match the hand-written `.expected` file. Wrong loop-exit edges would have folded to different numbers.
+
+**Loop elimination via scalar evolution.** A loop accumulating a loop-invariant product:
+
+```z
+fn licm(n: int, k: int) -> int {
+    let acc: int = 0
+    let i: int = 0
+    while (i < n) {
+        acc = acc + k * 8
+        i = i + 1
+    }
+    return acc
+}
+```
+
+`-O2` removes the loop entirely, replacing `n` iterations with a closed-form expression — LICM hoists `k * 8`, scalar evolution recognises the accumulation, `loop-deletion` drops the now-empty loop, and `instcombine` reduces `* 8` to a shift:
+
+```llvm
+define range(i64 0, -7) i64 @licm(i64 %n, i64 %k) local_unnamed_addr #1 {
+entry:
+  %0 = icmp sgt i64 %n, 0
+  %1 = mul i64 %k, %n
+  %2 = shl i64 %1, 3
+  %acc.0.lcssa = select i1 %0, i64 %2, i64 0
+  ret i64 %acc.0.lcssa
+}
+```
 
 ### A known limitation in what we emit
 
