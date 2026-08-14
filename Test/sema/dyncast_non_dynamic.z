@@ -1,0 +1,5 @@
+fn main() -> int {
+    let n: int = 1
+    print(dynamic_cast<int>(n))
+    return 0
+}

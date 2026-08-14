@@ -6,16 +6,20 @@ The full design, milestone breakdown, and architectural decisions live in [docs/
 
 ## Status
 
-Milestones **M0–M2** are complete; **M3** is in progress.
+Milestones **M0–M3** are complete. **M17a** (MLIR foundation) is partially landed.
 
 | Milestone | Scope | State |
 |---|---|---|
 | M0 | `print` + `return` compiling to a working `.exe` | done |
 | M1 | `let`, integer arithmetic, assignment | done |
 | M2 | Functions, `if`/`else`, `while`, `for`, `do…along`, `switch`, `break`, `continue` | done |
-| M3 | Full type system — `string`, `dynamic`, `null`, ternary, `static_cast` | in progress |
+| M3 | Full type system — `string`, `dynamic`, `null`, ternary, casts | done |
+| M4 | Namespaces + `using` import | next |
+| M17a | MLIR foundation — `z` dialect, build integration | partial |
 
-M3 currently has the scalar primitives (`int`, `int32`, `int64`, `int128`, `float16`, `float`, `double`, `bool`, `char`, `string` literals). Still to land: `string` as a real runtime type with `+` and comparisons, `dynamic`, `null`, the ternary operator, and `static_cast` parsing. See the M3 section of [docs/Plan.md](docs/Plan.md) for the ordered work list.
+M3 delivers the complete primitive set (`int`, `int32`, `int64`, `int128`, `float16`, `float`/`float32`, `double`/`float64`, `bool`, `character`, `string`, `dynamic`), the `null` value, the ternary operator, and both `static_cast<T>` and `dynamic_cast<T>`. `string` is a real runtime type — a heap `ZString` with `+` concatenation and all six comparison operators built in, no import required. `dynamic` boxes any primitive or string with a runtime type tag.
+
+M17a has the `z` dialect compiling and the build integration behind `-DZ_ENABLE_MLIR=ON`; the emitter and lowering pipeline are not yet written. See [docs/Plan.md](docs/Plan.md).
 
 ## Building
 
@@ -84,10 +88,11 @@ cmake --build build --target check
 
 The runner exits non-zero if anything fails, so it works as a CI gate.
 
-Two suites, discovered by file layout — dropping in a `.z` file and its expected-output companion is all it takes to add a case:
+Three suites, discovered by file layout — dropping in a `.z` file and its expected-output companion is all it takes to add a case:
 
 | Suite | Files | Check |
 |---|---|---|
+| `Test/parser/` | `*.z` + `*.expected-ast` | `--dump-ast` output must match exactly — pins precedence, associativity and node shape |
 | `Test/codegen/` | `*.z` + `*.expected` | Compile, run, compare stdout — **once per optimisation level** |
 | `Test/sema/` | `*.z` + `*.expected-error` | Must **fail** to compile; diagnostic must contain the expected text |
 
@@ -244,7 +249,8 @@ Two invariants worth knowing before touching the middle of it:
 ## Known gaps
 
 - **Every function is emitted with `ExternalLinkage`**, so LLVM cannot delete one even after inlining it everywhere, and the interprocedural passes that depend on knowing all callers (`deadargelim`, `argpromotion`) have nothing to work on. Marking non-`main` functions `internal` in `genFnDecl` would fix this. See the LLVM IR optimisation section for a measured example.
-- `--dump-ast` only handles a handful of node types; control-flow and M3 expression nodes print as `UnknownStmt` / `UnknownExpr`. There is no parser test suite until this is fixed, since it would otherwise lock in incorrect output.
 - `Include/Types.h` is empty and `TypeRef` is a flat enum in `AST.h`. It cannot represent parameterised types (`vector<int>`, `tensor<float, 2, 2>`) and will need to become a structured type before M11.
 - `int128` values print via truncation to 64 bits.
-- The language spec says `character`; the lexer currently accepts `char`.
+- **Nothing is ever freed.** `z_gc_alloc` is a `malloc` wrapper, so every string concatenation and every boxed `dynamic` leaks. The `ZGCHeader` is already in place on both types so the M14 collector needs no layout change, but until then long-running programs grow without bound.
+- `z_string_cstr` relies on every `ZString` being allocated one byte longer than its length, with that byte left zero. This ends when M6 adds slices that alias a parent buffer — at that point the function has to copy.
+- Strings are byte sequences, not Unicode-aware. Comparison is byte-wise lexicographic, `character` holds a code point but `print` emits it with `%c`, so non-ASCII code points do not round-trip yet.

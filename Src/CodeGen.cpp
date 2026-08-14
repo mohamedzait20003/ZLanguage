@@ -16,9 +16,21 @@ namespace ZCompiler {
         declarePrintf();
 
         for (const auto& decl : program.decls) {
+            if (auto* fn = dynamic_cast<const FnDecl*>(decl.get())) {
+                FnSignature sig;
+                sig.returnType = fn->returnType;
+
+                for (const auto& p : fn->params)
+                    sig.paramTypes.push_back(p.type);
+
+                signatures_[fn->name] = std::move(sig);
+            }
+        }
+
+        for (const auto& decl : program.decls) {
             if (auto* fn = dynamic_cast<const FnDecl*>(decl.get()))
                 genFnDecl(*fn);
-        }   
+        }
     }
 
     // Private Method implementations
@@ -40,22 +52,43 @@ namespace ZCompiler {
         scopes_.pop_back();
     }
 
-    void CodeGen::declareVar(const std::string& name, llvm::AllocaInst* slot) {
+    void CodeGen::declareVar(const std::string& name, llvm::AllocaInst* slot, TypeRef type) {
         if (scopes_.empty())
             scopes_.emplace_back();
 
-        scopes_.back()[name] = slot;
+        scopes_.back()[name] = VarBinding{slot, type};
     }
 
-    llvm::AllocaInst* CodeGen::lookupVar(const std::string& name) const {
+    const CodeGen::VarBinding* CodeGen::lookupVar(const std::string& name) const {
         for (auto it = scopes_.rbegin(); it != scopes_.rend(); ++it) {
             auto found = it->find(name);
 
             if (found != it->end())
-                return found->second;
+                return &found->second;
         }
 
         return nullptr;
+    }
+
+    llvm::StructType* CodeGen::zstringType() {
+        if (auto* existing = llvm::StructType::getTypeByName(ctx_, "ZString"))
+            return existing;
+
+        llvm::Type* ptrTy = llvm::PointerType::get(ctx_, 0);
+        llvm::Type* i32Ty = llvm::Type::getInt32Ty(ctx_);
+        llvm::Type* i64Ty = llvm::Type::getInt64Ty(ctx_);
+
+        auto* header = llvm::StructType::create(ctx_, {ptrTy, i32Ty, i32Ty}, "ZGCHeader");
+        return llvm::StructType::create(ctx_, {header, i64Ty}, "ZString");
+    }
+
+    llvm::Function* CodeGen::runtimeFn(llvm::Function*& cache, const char* name, llvm::Type* ret, llvm::ArrayRef<llvm::Type*> params) {
+        if (cache)
+            return cache;
+
+        llvm::FunctionType* ft = llvm::FunctionType::get(ret, params, false);
+        cache = llvm::Function::Create(ft, llvm::Function::ExternalLinkage, name, module_.get());
+        return cache;
     }
 
     llvm::Type* CodeGen::llvmType(TypeRef t) {
@@ -63,7 +96,7 @@ namespace ZCompiler {
             case TypeRef::Bool:
                 return llvm::Type::getInt1Ty(ctx_);
             case TypeRef::Int32:
-            case TypeRef::Char:
+            case TypeRef::Character:
                 return llvm::Type::getInt32Ty(ctx_);
             case TypeRef::Int:
             case TypeRef::Int64:
@@ -79,10 +112,171 @@ namespace ZCompiler {
             case TypeRef::Float64:
                 return llvm::Type::getDoubleTy(ctx_);
             case TypeRef::String:
+            case TypeRef::Dynamic:
+            case TypeRef::Null:
                 return llvm::PointerType::get(ctx_, 0);
             default:
                 throw std::runtime_error("codegen: unknown type");
         }
+    }
+
+    int CodeGen::dynamicTagFor(TypeRef type) {
+        switch (type) {
+            case TypeRef::Int:
+            case TypeRef::Int32:
+            case TypeRef::Int64:
+            case TypeRef::Int128:
+                return 1;   // DYN_INT
+            case TypeRef::Float:
+            case TypeRef::Float32:
+            case TypeRef::Float16:
+                return 2;   // DYN_FLOAT
+            case TypeRef::Double:
+            case TypeRef::Float64:
+                return 3;   // DYN_DOUBLE
+            case TypeRef::Bool:
+                return 4;   // DYN_BOOL
+            case TypeRef::Character:
+                return 5;   // DYN_CHAR
+            case TypeRef::String:
+                return 6;   // DYN_STRING
+            default:
+                throw std::runtime_error("codegen: type cannot be stored in a dynamic");
+        }
+    }
+
+    // Emits a string literal as a private global ZString and returns a pointer
+    // to it. Literals are interned by value, so repeated text costs one global.
+    llvm::Constant* CodeGen::internString(const std::string& value) {
+        auto found = stringLiterals_.find(value);
+        if (found != stringLiterals_.end())
+            return found->second;
+
+        llvm::Type* ptrTy = llvm::PointerType::get(ctx_, 0);
+        llvm::Type* i32Ty = llvm::Type::getInt32Ty(ctx_);
+        llvm::Type* i64Ty = llvm::Type::getInt64Ty(ctx_);
+
+        auto* headerTy = llvm::StructType::getTypeByName(ctx_, "ZGCHeader");
+        if (!headerTy) {
+            zstringType();
+            headerTy = llvm::StructType::getTypeByName(ctx_, "ZGCHeader");
+        }
+
+        llvm::ArrayType* bytesTy = llvm::ArrayType::get(llvm::Type::getInt8Ty(ctx_), value.size() + 1);
+        llvm::StructType* litTy = llvm::StructType::get(ctx_, {headerTy, i64Ty, bytesTy});
+
+        llvm::Constant* header = llvm::ConstantStruct::get(
+            headerTy,
+            {llvm::ConstantPointerNull::get(llvm::cast<llvm::PointerType>(ptrTy)),
+             llvm::ConstantInt::get(i32Ty, 0x7FFFFFFF),
+             llvm::ConstantInt::get(i32Ty, 0)});
+
+        llvm::Constant* init = llvm::ConstantStruct::get(
+            litTy,
+            {header,
+             llvm::ConstantInt::get(i64Ty, static_cast<uint64_t>(value.size())),
+             llvm::ConstantDataArray::getString(ctx_, value, true)});
+
+        auto* global = new llvm::GlobalVariable(*module_, litTy, true, llvm::GlobalValue::PrivateLinkage, init, "zstr");
+        global->setAlignment(llvm::MaybeAlign(8));
+
+        stringLiterals_[value] = global;
+        return global;
+    }
+
+    llvm::Value* CodeGen::boxToDynamic(llvm::Value* v, TypeRef from) {
+        llvm::Type* i32Ty = llvm::Type::getInt32Ty(ctx_);
+        llvm::Type* i64Ty = llvm::Type::getInt64Ty(ctx_);
+        llvm::Type* ptrTy = llvm::PointerType::get(ctx_, 0);
+        llvm::Value* payload = nullptr;
+
+        switch (from) {
+            case TypeRef::Float:
+            case TypeRef::Float32:
+                payload = builder_.CreateZExt(builder_.CreateBitCast(v, i32Ty), i64Ty);
+                break;
+
+            case TypeRef::Float16:
+                payload = builder_.CreateZExt(
+                    builder_.CreateBitCast(builder_.CreateFPExt(v, llvm::Type::getFloatTy(ctx_)), i32Ty),
+                    i64Ty);
+                break;
+
+            case TypeRef::Double:
+            case TypeRef::Float64:
+                payload = builder_.CreateBitCast(v, i64Ty);
+                break;
+
+            case TypeRef::String:
+                payload = builder_.CreatePtrToInt(v, i64Ty);
+                break;
+
+            case TypeRef::Bool:
+                payload = builder_.CreateZExt(v, i64Ty);
+                break;
+
+            default:
+                payload = builder_.CreateSExt(v, i64Ty);
+                break;
+        }
+
+        llvm::Function* box = runtimeFn(dynamicBox_, "z_dynamic_box", ptrTy, {i32Ty, i64Ty});
+        return builder_.CreateCall(
+            box, {llvm::ConstantInt::get(i32Ty, dynamicTagFor(from)), payload});
+    }
+
+    llvm::Value* CodeGen::unboxFromDynamic(llvm::Value* dyn, TypeRef to, bool safe) {
+        llvm::Type* i32Ty = llvm::Type::getInt32Ty(ctx_);
+        llvm::Type* i64Ty = llvm::Type::getInt64Ty(ctx_);
+        llvm::Type* ptrTy = llvm::PointerType::get(ctx_, 0);
+
+        llvm::Function* fn = safe ? runtimeFn(dynamicTryUnbox_, "z_dynamic_try_unbox", i64Ty, {i32Ty, ptrTy}) : runtimeFn(dynamicUnbox_, "z_dynamic_unbox", i64Ty, {i32Ty, ptrTy});
+
+        llvm::Value* raw = builder_.CreateCall(fn, {llvm::ConstantInt::get(i32Ty, dynamicTagFor(to)), dyn});
+
+        switch (to) {
+            case TypeRef::Float:
+            case TypeRef::Float32:
+                return builder_.CreateBitCast(builder_.CreateTrunc(raw, i32Ty), llvm::Type::getFloatTy(ctx_));
+
+            case TypeRef::Float16:
+                return builder_.CreateFPTrunc(
+                    builder_.CreateBitCast(builder_.CreateTrunc(raw, i32Ty), llvm::Type::getFloatTy(ctx_)),
+                    llvm::Type::getHalfTy(ctx_));
+
+            case TypeRef::Double:
+            case TypeRef::Float64:
+                return builder_.CreateBitCast(raw, llvm::Type::getDoubleTy(ctx_));
+
+            case TypeRef::String:
+                return builder_.CreateIntToPtr(raw, ptrTy);
+
+            case TypeRef::Bool:
+                return builder_.CreateICmpNE(raw, llvm::ConstantInt::get(i64Ty, 0));
+
+            default:
+                return coerce(raw, i64Ty, llvmType(to));
+        }
+    }
+
+    llvm::Value* CodeGen::convert(llvm::Value* val, TypeRef from, TypeRef to) {
+        if (from == to)
+            return val;
+
+        if (to == TypeRef::Dynamic && from != TypeRef::Dynamic) {
+            if (from == TypeRef::Null)
+                return llvm::ConstantPointerNull::get(llvm::PointerType::get(ctx_, 0));
+
+            return boxToDynamic(val, from);
+        }
+
+        if (from == TypeRef::Dynamic && to != TypeRef::Dynamic)
+            return unboxFromDynamic(val, to, false);
+
+        if (from == TypeRef::Null)
+            return llvm::ConstantPointerNull::get(llvm::PointerType::get(ctx_, 0));
+
+        return coerce(val, val->getType(), llvmType(to));
     }
 
     llvm::Value* CodeGen::genExpr(const Expr& expr) {
@@ -107,16 +301,25 @@ namespace ZCompiler {
         }
 
         if (auto* lit = dynamic_cast<const StringLitExpr*>(&expr)) {
-            return builder_.CreateGlobalString(lit->value, "str");
+            return internString(lit->value);
+        }
+
+        if (dynamic_cast<const NullLitExpr*>(&expr)) {
+            return llvm::ConstantPointerNull::get(llvm::PointerType::get(ctx_, 0));
+        }
+
+        if (auto* tern = dynamic_cast<const TernaryExpr*>(&expr)) {
+            return genTernary(*tern);
         }
 
         if (auto* cast = dynamic_cast<const CastExpr*>(&expr)) {
             llvm::Value* src = genExpr(*cast->operand);
+            return convert(src, cast->operand->resolvedType, cast->targetType);
+        }
 
-            llvm::Type* from = src->getType();
-            llvm::Type* to = llvmType(cast->targetType);
-
-            return coerce(src, from, to);
+        if (auto* cast = dynamic_cast<const DynCastExpr*>(&expr)) {
+            llvm::Value* src = genExpr(*cast->operand);
+            return unboxFromDynamic(src, cast->targetType, true);
         }
 
         if (auto* call = dynamic_cast<const CallExpr*>(&expr)) {
@@ -130,29 +333,49 @@ namespace ZCompiler {
             if (callee->arg_size() != call->args.size())
                 throw std::runtime_error("function '" + call->callee + "' expects " + std::to_string(callee->arg_size()) + " arguments, but got " + std::to_string(call->args.size()) + ")");
 
+            auto sig = signatures_.find(call->callee);
+
             std::vector<llvm::Value*> args;
-            for (const auto& arg : call->args)
-                args.push_back(genExpr(*arg));
-    
+            for (std::size_t i = 0; i < call->args.size(); ++i) {
+                llvm::Value* v = genExpr(*call->args[i]);
+
+                if (sig != signatures_.end() && i < sig->second.paramTypes.size())
+                    v = convert(v, call->args[i]->resolvedType, sig->second.paramTypes[i]);
+
+                args.push_back(v);
+            }
+
             return builder_.CreateCall(callee, args);
         }
 
         if (auto* id = dynamic_cast<const IdentExpr*>(&expr)) {
-            llvm::AllocaInst* slot = lookupVar(id->name);
-            if (!slot)
+            const VarBinding* binding = lookupVar(id->name);
+            if (!binding)
                 throw std::runtime_error("use of undeclared variable '" + id->name + "'");
 
-            return builder_.CreateLoad(slot->getAllocatedType(), slot, id->name);
+            return builder_.CreateLoad(binding->slot->getAllocatedType(), binding->slot, id->name);
         }
 
         if (auto* bin = dynamic_cast<const BinaryExpr*>(&expr)) {
-            // Must be intercepted before either operand is generated: the whole
-            // point is that the right-hand side is not always evaluated.
             if (bin->op == "&&" || bin->op == "||")
                 return genShortCircuit(*bin);
 
             llvm::Value* lhs = genExpr(*bin->lhs);
             llvm::Value* rhs = genExpr(*bin->rhs);
+
+            const TypeRef lhsZ = bin->lhs->resolvedType;
+            const TypeRef rhsZ = bin->rhs->resolvedType;
+
+            if ((bin->op == "==" || bin->op == "!=") &&
+                (lhsZ == TypeRef::Null || rhsZ == TypeRef::Null)) {
+                llvm::Value* ptr = lhsZ == TypeRef::Null ? rhs : lhs;
+                llvm::Value* null = llvm::ConstantPointerNull::get(llvm::PointerType::get(ctx_, 0));
+
+                return bin->op == "==" ? builder_.CreateICmpEQ(ptr, null, "isnull") : builder_.CreateICmpNE(ptr, null, "notnull");
+            }
+
+            if (lhsZ == TypeRef::String && rhsZ == TypeRef::String)
+                return genStringBinary(*bin, lhs, rhs);
 
             llvm::Type* LhsType = lhs->getType();
             llvm::Type* RhsType = rhs->getType();
@@ -175,30 +398,37 @@ namespace ZCompiler {
 
             if (bin->op == "+")
                 return isFloatOp ? builder_.CreateFAdd(lhs, rhs, "addtmp") : builder_.CreateAdd(lhs, rhs, "addtmp");
+            
             if (bin->op == "*")
                 return isFloatOp ? builder_.CreateFMul(lhs, rhs, "multmp") : builder_.CreateMul(lhs, rhs, "multmp");
+            
             if (bin->op == "-")
                 return isFloatOp ? builder_.CreateFSub(lhs, rhs, "subtmp") : builder_.CreateSub(lhs, rhs, "subtmp");
+            
             if (bin->op == "/")
                 return isFloatOp ? builder_.CreateFDiv(lhs, rhs, "divtmp") : builder_.CreateSDiv(lhs, rhs, "divtmp");
+            
             if (bin->op == "%")
                 return builder_.CreateSRem(lhs, rhs, "remtmp");
 
             if (bin->op == "==") 
                 return isFloatOp ? builder_.CreateFCmpOEQ(lhs,rhs) : builder_.CreateICmpEQ(lhs,rhs);
+            
             if (bin->op == "!=") 
                 return isFloatOp ? builder_.CreateFCmpONE(lhs,rhs) : builder_.CreateICmpNE(lhs,rhs);
+            
             if (bin->op == "<")  
                 return isFloatOp ? builder_.CreateFCmpOLT(lhs,rhs) : builder_.CreateICmpSLT(lhs,rhs);
+            
             if (bin->op == "<=") 
                 return isFloatOp ? builder_.CreateFCmpOLE(lhs,rhs) : builder_.CreateICmpSLE(lhs,rhs);
+            
             if (bin->op == ">")  
                 return isFloatOp ? builder_.CreateFCmpOGT(lhs,rhs) : builder_.CreateICmpSGT(lhs,rhs);
+            
             if (bin->op == ">=") 
                 return isFloatOp ? builder_.CreateFCmpOGE(lhs,rhs) : builder_.CreateICmpSGE(lhs,rhs);
 
-            // `&&` and `||` never reach here — genExpr routes them to
-            // genShortCircuit before the operands are evaluated.
             throw std::runtime_error("codegen: unknown binary operator '" + bin->op + "'");
         }
 
@@ -236,7 +466,7 @@ namespace ZCompiler {
                 arg = builder_.CreateZExt(arg, llvm::Type::getInt32Ty(ctx_));
                 break;
 
-            case TypeRef::Char:
+            case TypeRef::Character:
                 fmt = "%c\n";
                 break;
 
@@ -266,9 +496,21 @@ namespace ZCompiler {
                 fmt = "%lf\n";
                 break;
 
-            case TypeRef::String:
+            case TypeRef::String: {
+                llvm::Type* ptrTy = llvm::PointerType::get(ctx_, 0);
+                llvm::Function* cstr = runtimeFn(stringCstr_, "z_string_cstr", ptrTy, {ptrTy});
+                arg = builder_.CreateCall(cstr, {arg}, "cstr");
                 fmt = "%s\n";
                 break;
+            }
+
+            case TypeRef::Dynamic: {
+                llvm::Type* ptrTy = llvm::PointerType::get(ctx_, 0);
+                llvm::Function* dynPrint = runtimeFn(dynamicPrint_, "z_dynamic_print", llvm::Type::getVoidTy(ctx_), {ptrTy});
+                
+                builder_.CreateCall(dynPrint, {arg});
+                return llvm::ConstantInt::get(llvm::Type::getInt32Ty(ctx_), 0);
+            }
 
             default:
                 throw std::runtime_error("codegen: print() does not support this type");
@@ -306,6 +548,49 @@ namespace ZCompiler {
         phi->addIncoming(llvm::ConstantInt::get(boolTy, isAnd ? 0 : 1), lhsEnd);
         phi->addIncoming(rhsBool, rhsEnd);
         return phi;
+    }
+
+    llvm::Value* CodeGen::genStringBinary(const BinaryExpr& bin, llvm::Value* lhs, llvm::Value* rhs) {
+        llvm::Type* ptrTy = llvm::PointerType::get(ctx_, 0);
+        llvm::Type* i32Ty = llvm::Type::getInt32Ty(ctx_);
+
+        if (bin.op == "+") {
+            llvm::Function* concat = runtimeFn(stringConcat_, "z_string_concat", ptrTy, {ptrTy, ptrTy});
+            return builder_.CreateCall(concat, {lhs, rhs}, "concat");
+        }
+
+        llvm::Function* cmp = runtimeFn(stringCmp_, "z_string_cmp", i32Ty, {ptrTy, ptrTy});
+        llvm::Value* result = builder_.CreateCall(cmp, {lhs, rhs}, "strcmp");
+        llvm::Value* zero = llvm::ConstantInt::get(i32Ty, 0);
+
+        if (bin.op == "==")
+            return builder_.CreateICmpEQ(result, zero);
+        
+        if (bin.op == "!=")
+            return builder_.CreateICmpNE(result, zero);
+        
+        if (bin.op == "<")
+            return builder_.CreateICmpSLT(result, zero);
+        
+        if (bin.op == "<=")
+            return builder_.CreateICmpSLE(result, zero);
+        
+        if (bin.op == ">")
+            return builder_.CreateICmpSGT(result, zero);
+        
+        if (bin.op == ">=")
+            return builder_.CreateICmpSGE(result, zero);
+
+        throw std::runtime_error("codegen: operator '" + bin.op + "' is not defined for strings");
+    }
+
+    llvm::Value* CodeGen::genTernary(const TernaryExpr& tern) {
+        llvm::Value* cond = toBoolValue(genExpr(*tern.cond));
+
+        llvm::Value* thenVal = convert(genExpr(*tern.thenExpr), tern.thenExpr->resolvedType, tern.resolvedType);
+        llvm::Value* elseVal = convert(genExpr(*tern.elseExpr), tern.elseExpr->resolvedType, tern.resolvedType);
+
+        return builder_.CreateSelect(cond, thenVal, elseVal, "terntmp");
     }
 
     llvm::Value* CodeGen::toBoolValue(llvm::Value* v) {
@@ -368,8 +653,11 @@ namespace ZCompiler {
     void CodeGen::genStmt(const Stmt& stmt) {
         if (auto* ret = dynamic_cast<const ReturnStmt*>(&stmt)) {
             llvm::Value* val = genExpr(*ret->value);
-            llvm::Type* retTy = builder_.GetInsertBlock()->getParent()->getReturnType();
+            val = convert(val, ret->value->resolvedType, currentReturnType_);
 
+            // `main` is declared i32 regardless of Z's `int`, so a final width
+            // adjustment can still be needed after the Z-level conversion.
+            llvm::Type* retTy = builder_.GetInsertBlock()->getParent()->getReturnType();
             if (val->getType() != retTy)
                 val = coerce(val, val->getType(), retTy);
 
@@ -387,9 +675,9 @@ namespace ZCompiler {
 
             llvm::Type* allocaTy = llvmType(let->type);
             llvm::AllocaInst* alloca = createEntryBlockAlloca(fn, let->name, allocaTy);
-            declareVar(let->name, alloca);
+            declareVar(let->name, alloca, let->type);
 
-            llvm::Value* initVal = genExpr(*let->init);
+            llvm::Value* initVal = convert(genExpr(*let->init), let->init->resolvedType, let->type);
             if (initVal->getType() != allocaTy)
                 initVal = coerce(initVal, initVal->getType(), allocaTy);
 
@@ -398,17 +686,17 @@ namespace ZCompiler {
         }
 
         if (auto* asgn = dynamic_cast<const AssignStmt*>(&stmt)) {
-            llvm::AllocaInst* slot = lookupVar(asgn->name);
-            if (!slot)
+            const VarBinding* binding = lookupVar(asgn->name);
+            if (!binding)
                 throw std::runtime_error("assignment to undeclared variable '" + asgn->name + "'");
 
-            llvm::Type* varTy = slot->getAllocatedType();
-            llvm::Value* val = genExpr(*asgn->value);
+            llvm::Type* varTy = binding->slot->getAllocatedType();
+            llvm::Value* val = convert(genExpr(*asgn->value), asgn->value->resolvedType, binding->type);
 
             if (val->getType() != varTy)
                 val = coerce(val, val->getType(), varTy);
 
-            builder_.CreateStore(val, slot);
+            builder_.CreateStore(val, binding->slot);
             return;
         }
 
@@ -627,6 +915,7 @@ namespace ZCompiler {
     void CodeGen::genFnDecl(const FnDecl& fn) {
         scopes_.clear();
         pushScope();
+        currentReturnType_ = fn.returnType;
 
         std::vector<llvm::Type*> paramTypes;
         for (const auto& p : fn.params)
@@ -651,15 +940,13 @@ namespace ZCompiler {
             llvm::AllocaInst* alloca = createEntryBlockAlloca(func, fn.params[i].name, llvmType(fn.params[i].type));
 
             builder_.CreateStore(&arg, alloca);
-            declareVar(fn.params[i].name, alloca);
+            declareVar(fn.params[i].name, alloca, fn.params[i].type);
             i++;
         }
 
         for (const auto& stmt : fn.body->stmts)
             genStmt(*stmt);
 
-        // Sema guarantees every path returns, so this only terminates the unreachable
-        // block left behind by a trailing `break` or `continue`.
         if (!builder_.GetInsertBlock()->getTerminator())
             builder_.CreateUnreachable();
 

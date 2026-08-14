@@ -47,7 +47,7 @@ fn main() -> int {
     print(f)    # 0
 
     # --- char literal ---
-    let ch: char = 'Z'
+    let ch: character = 'Z'
     print(ch)   # Z
 
     # --- string literal ---

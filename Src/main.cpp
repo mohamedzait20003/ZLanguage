@@ -26,29 +26,102 @@
 
 static std::string indent(int n) { return std::string(n * 2, ' '); }
 
+static const char* typeName(ZCompiler::TypeRef t) {
+    using T = ZCompiler::TypeRef;
+    switch (t) {
+        case T::Int:       return "int";
+        case T::Int32:     return "int32";
+        case T::Int64:     return "int64";
+        case T::Int128:    return "int128";
+        case T::Float:     return "float";
+        case T::Float16:   return "float16";
+        case T::Float32:   return "float32";
+        case T::Float64:   return "float64";
+        case T::Double:    return "double";
+        case T::Bool:      return "bool";
+        case T::Character: return "character";
+        case T::String:    return "string";
+        case T::Dynamic:   return "dynamic";
+        case T::Null:      return "null";
+    }
+    return "?";
+}
+
+static void dumpStmt(const ZCompiler::Stmt& stmt, int d);
+
+static void dumpBlock(const ZCompiler::BlockStmt& block, int d, const char* label) {
+    std::cout << indent(d) << label << "\n";
+    for (const auto& s : block.stmts)
+        dumpStmt(*s, d + 1);
+}
+
 static void dumpExpr(const ZCompiler::Expr& expr, int d) {
-    if (auto* lit = dynamic_cast<const ZCompiler::IntLitExpr*>(&expr)) {
-        std::cout << indent(d) << "IntLitExpr(" << lit->value << ")\n";
+    using namespace ZCompiler;
+
+    if (auto* lit = dynamic_cast<const IntLitExpr*>(&expr)) {
+        std::cout << indent(d) << "IntLit(" << lit->value << ")\n";
         return;
     }
-
-    if (auto* call = dynamic_cast<const ZCompiler::CallExpr*>(&expr)) {
-        std::cout << indent(d) << "CallExpr(callee=" << call->callee << ")\n";
+    if (auto* lit = dynamic_cast<const FloatLitExpr*>(&expr)) {
+        std::cout << indent(d) << "FloatLit(" << lit->value << ")\n";
+        return;
+    }
+    if (auto* lit = dynamic_cast<const DoubleLitExpr*>(&expr)) {
+        std::cout << indent(d) << "DoubleLit(" << lit->value << ")\n";
+        return;
+    }
+    if (auto* lit = dynamic_cast<const BoolLitExpr*>(&expr)) {
+        std::cout << indent(d) << "BoolLit(" << (lit->value ? "true" : "false") << ")\n";
+        return;
+    }
+    if (auto* lit = dynamic_cast<const CharLitExpr*>(&expr)) {
+        std::cout << indent(d) << "CharLit(" << lit->value << ")\n";
+        return;
+    }
+    if (auto* lit = dynamic_cast<const StringLitExpr*>(&expr)) {
+        std::cout << indent(d) << "StringLit(\"" << lit->value << "\")\n";
+        return;
+    }
+    if (dynamic_cast<const NullLitExpr*>(&expr)) {
+        std::cout << indent(d) << "NullLit\n";
+        return;
+    }
+    if (auto* id = dynamic_cast<const IdentExpr*>(&expr)) {
+        std::cout << indent(d) << "Ident(" << id->name << ")\n";
+        return;
+    }
+    if (auto* call = dynamic_cast<const CallExpr*>(&expr)) {
+        std::cout << indent(d) << "Call(" << call->callee << ")\n";
         for (const auto& arg : call->args)
             dumpExpr(*arg, d + 1);
-
         return;
     }
-
-    if (auto* id = dynamic_cast<const ZCompiler::IdentExpr*>(&expr)) {
-        std::cout << indent(d) << "IdentExpr(" << id->name << ")\n";
-        return;
-    }
-
-    if (auto* bin = dynamic_cast<const ZCompiler::BinaryExpr*>(&expr)) {
-        std::cout << indent(d) << "BinaryExpr(" << bin->op << ")\n";
+    if (auto* bin = dynamic_cast<const BinaryExpr*>(&expr)) {
+        std::cout << indent(d) << "Binary(" << bin->op << ")\n";
         dumpExpr(*bin->lhs, d + 1);
         dumpExpr(*bin->rhs, d + 1);
+        return;
+    }
+    if (auto* un = dynamic_cast<const UnaryExpr*>(&expr)) {
+        std::cout << indent(d) << "Unary(" << un->op << ")\n";
+        dumpExpr(*un->operand, d + 1);
+        return;
+    }
+    if (auto* tern = dynamic_cast<const TernaryExpr*>(&expr)) {
+        std::cout << indent(d) << "Ternary\n";
+        dumpExpr(*tern->cond, d + 1);
+        dumpExpr(*tern->thenExpr, d + 1);
+        dumpExpr(*tern->elseExpr, d + 1);
+        return;
+    }
+    if (auto* cast = dynamic_cast<const CastExpr*>(&expr)) {
+        std::cout << indent(d) << "StaticCast(" << typeName(cast->targetType) << ")\n";
+        dumpExpr(*cast->operand, d + 1);
+        return;
+    }
+    if (auto* cast = dynamic_cast<const DynCastExpr*>(&expr)) {
+        std::cout << indent(d) << "DynamicCast(" << typeName(cast->targetType) << ")\n";
+        dumpExpr(*cast->operand, d + 1);
         return;
     }
 
@@ -56,27 +129,78 @@ static void dumpExpr(const ZCompiler::Expr& expr, int d) {
 }
 
 static void dumpStmt(const ZCompiler::Stmt& stmt, int d) {
-    if (auto* ret = dynamic_cast<const ZCompiler::ReturnStmt*>(&stmt)) {
-        std::cout << indent(d) << "ReturnStmt\n";
+    using namespace ZCompiler;
+
+    if (auto* ret = dynamic_cast<const ReturnStmt*>(&stmt)) {
+        std::cout << indent(d) << "Return\n";
         dumpExpr(*ret->value, d + 1);
         return;
     }
-
-    if (auto* es = dynamic_cast<const ZCompiler::ExprStmt*>(&stmt)) {
+    if (auto* es = dynamic_cast<const ExprStmt*>(&stmt)) {
         std::cout << indent(d) << "ExprStmt\n";
         dumpExpr(*es->expr, d + 1);
         return;
     }
-
-    if (auto* let = dynamic_cast<const ZCompiler::LetStmt*>(&stmt)) {
-        std::cout << indent(d) << "LetStmt(name=" << let->name << ")\n";
+    if (auto* let = dynamic_cast<const LetStmt*>(&stmt)) {
+        std::cout << indent(d) << "Let(" << let->name << ": " << typeName(let->type) << ")\n";
         dumpExpr(*let->init, d + 1);
         return;
     }
-
-    if (auto* asgn = dynamic_cast<const ZCompiler::AssignStmt*>(&stmt)) {
-        std::cout << indent(d) << "AssignStmt(" << asgn->name << ")\n";
+    if (auto* asgn = dynamic_cast<const AssignStmt*>(&stmt)) {
+        std::cout << indent(d) << "Assign(" << asgn->name << ")\n";
         dumpExpr(*asgn->value, d + 1);
+        return;
+    }
+    if (auto* ifs = dynamic_cast<const IfStmt*>(&stmt)) {
+        std::cout << indent(d) << "If\n";
+        dumpExpr(*ifs->cond, d + 1);
+        dumpBlock(*ifs->thenBranch, d + 1, "Then");
+        if (ifs->elseBranch)
+            dumpBlock(*ifs->elseBranch, d + 1, "Else");
+        return;
+    }
+    if (auto* whl = dynamic_cast<const WhileStmt*>(&stmt)) {
+        std::cout << indent(d) << "While\n";
+        dumpExpr(*whl->cond, d + 1);
+        dumpBlock(*whl->body, d + 1, "Body");
+        return;
+    }
+    if (auto* ds = dynamic_cast<const DoStmt*>(&stmt)) {
+        std::cout << indent(d) << "DoAlong\n";
+        dumpBlock(*ds->body, d + 1, "Body");
+        dumpExpr(*ds->cond, d + 1);
+        return;
+    }
+    if (auto* fs = dynamic_cast<const ForStmt*>(&stmt)) {
+        std::cout << indent(d) << "For\n";
+        dumpStmt(*fs->init, d + 1);
+        dumpExpr(*fs->cond, d + 1);
+        dumpStmt(*fs->step, d + 1);
+        dumpBlock(*fs->body, d + 1, "Body");
+        return;
+    }
+    if (auto* sw = dynamic_cast<const SwitchStmt*>(&stmt)) {
+        std::cout << indent(d) << "Switch\n";
+        dumpExpr(*sw->scrutinee, d + 1);
+        for (const auto& arm : sw->cases) {
+            std::cout << indent(d + 1) << "Case\n";
+            dumpExpr(*arm.value, d + 2);
+            dumpBlock(*arm.body, d + 2, "Body");
+        }
+        if (sw->defaultArm)
+            dumpBlock(*sw->defaultArm, d + 1, "Default");
+        return;
+    }
+    if (dynamic_cast<const BreakStmt*>(&stmt)) {
+        std::cout << indent(d) << "Break\n";
+        return;
+    }
+    if (dynamic_cast<const ContinueStmt*>(&stmt)) {
+        std::cout << indent(d) << "Continue\n";
+        return;
+    }
+    if (auto* block = dynamic_cast<const BlockStmt*>(&stmt)) {
+        dumpBlock(*block, d, "Block");
         return;
     }
 
@@ -87,7 +211,13 @@ static void dumpProgram(const ZCompiler::Program& prog) {
     std::cout << "Program\n";
     for (const auto& decl : prog.decls) {
         if (auto* fn = dynamic_cast<const ZCompiler::FnDecl*>(decl.get())) {
-            std::cout << "  FnDecl(name=" << fn->name << ")\n";
+            std::cout << "  Fn " << fn->name << "(";
+            for (std::size_t i = 0; i < fn->params.size(); ++i) {
+                if (i) std::cout << ", ";
+                std::cout << fn->params[i].name << ": " << typeName(fn->params[i].type);
+            }
+            std::cout << ") -> " << typeName(fn->returnType) << "\n";
+
             for (const auto& stmt : fn->body->stmts)
                 dumpStmt(*stmt, 2);
         }
@@ -252,7 +382,13 @@ int main(int argc, char* argv[]) {
         pm.run(*module);
         dest.flush();
 
-        std::string linkCmd = "clang " + objFile + " -o " + outputFile;
+#ifdef Z_RUNTIME_LIB
+        const std::string runtimeLib = " \"" Z_RUNTIME_LIB "\"";
+#else
+        const std::string runtimeLib = "";
+#endif
+
+        std::string linkCmd = "clang \"" + objFile + "\"" + runtimeLib + " -o \"" + outputFile + "\"";
         int ret = std::system(linkCmd.c_str());
         if (ret != 0) {
             std::cerr << "error: linker failed (exit " << ret << ")\n";

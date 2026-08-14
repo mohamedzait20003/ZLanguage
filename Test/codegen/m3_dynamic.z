@@ -1,0 +1,53 @@
+# `dynamic` boxes any primitive or string, carrying a type tag checked at
+# runtime. There is no implicit unboxing: extracting requires static_cast
+# (aborts on mismatch) or dynamic_cast (yields a zero value instead).
+
+fn describe(v: dynamic) -> int {
+    print(v)
+    return 0
+}
+
+fn main() -> int {
+    # --- boxing every primitive, printed by runtime tag dispatch ---
+    let i: dynamic = 42
+    let d: dynamic = 3.5
+    let b: dynamic = true
+    let c: dynamic = 'Q'
+    let s: dynamic = "boxed"
+    print(i)
+    print(d)
+    print(b)
+    print(c)
+    print(s)
+
+    # --- reassignment may change the held type ---
+    let v: dynamic = 1
+    print(v)
+    v = "now text"
+    print(v)
+    v = false
+    print(v)
+
+    # --- boxing across a call boundary ---
+    describe(7)
+    describe("via param")
+
+    # --- unboxing with static_cast ---
+    let n: int = static_cast<int>(i)
+    print(n + 1)
+    let f: double = static_cast<double>(d)
+    print(f * 2.0)
+    let str: string = static_cast<string>(s)
+    print(str + "!")
+
+    # --- dynamic_cast yields a zero value on mismatch instead of aborting ---
+    print(dynamic_cast<int>(s))     # 0 — s holds a string
+    print(dynamic_cast<int>(i))     # 42 — tag matches
+
+    # --- null dynamic ---
+    let z: dynamic = null
+    print(z == null)                # 1
+    print(i == null)                # 0
+
+    return 0
+}

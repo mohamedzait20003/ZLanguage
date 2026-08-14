@@ -1,0 +1,45 @@
+# `string` is a keyword primitive: no import, `+` concatenation and all six
+# comparison operators are built in. Named operations arrive with the M6 library.
+
+fn greet(name: string) -> string {
+    return "hello, " + name
+}
+
+fn main() -> int {
+    let s: string = "hello"
+    let t: string = " world"
+
+    print(s)
+    print(s + t)
+    print(greet("z"))
+
+    # empty string round-trips
+    let e: string = ""
+    print(e + "after-empty")
+
+    # --- equality ---
+    print(s == "hello")     # 1
+    print(s == "hellp")     # 0
+    print(s != "hello")     # 0
+    print(s != "nope")      # 1
+
+    # --- ordering is byte-wise lexicographic ---
+    print("abc" < "abd")    # 1
+    print("abd" < "abc")    # 0
+    print("ab"  < "abc")    # 1  prefix sorts first
+    print("abc" > "ab")     # 1
+    print("abc" <= "abc")   # 1
+    print("abc" >= "abc")   # 1
+
+    # --- null is assignable and compared by identity ---
+    let n: string = null
+    print(n == null)        # 1
+    print(n != null)        # 0
+    print(s == null)        # 0
+    print(s != null)        # 1
+
+    # --- concatenation chains left to right ---
+    print("a" + "b" + "c")
+
+    return 0
+}

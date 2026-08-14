@@ -93,10 +93,12 @@ namespace ZCompiler {
                 return TypeRef::Float64;
             case TokenType::Bool:
                 return TypeRef::Bool;
-            case TokenType::Char:
-                return TypeRef::Char;
+            case TokenType::Character:
+                return TypeRef::Character;
             case TokenType::String:
                 return TypeRef::String;
+            case TokenType::Dynamic:
+                return TypeRef::Dynamic;
             default:
                 throw std::runtime_error("expected type at line " + std::to_string(t.line) + ", column " + std::to_string(t.column));
         }
@@ -453,7 +455,29 @@ namespace ZCompiler {
     
     // Expressions
     ExprPtr Parser::parseExpr() {
-        return parseOrExpr();
+        return parseTernaryExpr();
+    }
+
+    ExprPtr Parser::parseTernaryExpr() {
+        ExprPtr cond = parseOrExpr();
+
+        if (!check(TokenType::Question))
+            return cond;
+
+        const Token& q = advance();
+
+        ExprPtr thenExpr = parseExpr();
+        expect(TokenType::Colon, "expected ':' in ternary expression");
+
+        ExprPtr elseExpr = parseTernaryExpr();
+        auto expr = std::make_unique<TernaryExpr>();
+
+        expr->line = q.line;
+        expr->column = q.column;
+        expr->cond = std::move(cond);
+        expr->thenExpr = std::move(thenExpr);
+        expr->elseExpr = std::move(elseExpr);
+        return expr;
     }
 
     ExprPtr Parser::parseUnaryExpr() {
@@ -466,16 +490,71 @@ namespace ZCompiler {
             expr->operand = parseUnaryExpr();
             return expr;
         }
-        return parsePrimaryExpr();
+        return parseCastExpr();
+    }
+
+    ExprPtr Parser::parseCastExpr() {
+        const bool isStatic  = check(TokenType::StaticCast);
+        const bool isDynamic = check(TokenType::DynamicCast);
+
+        if (!isStatic && !isDynamic)
+            return parsePrimaryExpr();
+
+        const Token& kw = advance();
+        const int line = kw.line, column = kw.column;
+        const char* name = isStatic ? "static_cast" : "dynamic_cast";
+
+        expect(TokenType::Less, std::string(std::string("expected '<' after '") + name + "'").c_str());
+        TypeRef target = parseTypeRef();
+        expect(TokenType::Greater, std::string(std::string("expected '>' after cast target type in '") + name + "'").c_str());
+        expect(TokenType::LParen, std::string(std::string("expected '(' after '") + name + "<T>'").c_str());
+
+        ExprPtr operand = parseExpr();
+        expect(TokenType::RParen, "expected ')' after cast operand");
+
+        if (isStatic) {
+            auto expr        = std::make_unique<CastExpr>();
+            expr->line       = line;
+            expr->column     = column;
+            expr->targetType = target;
+            expr->operand    = std::move(operand);
+            return expr;
+        }
+
+        auto expr        = std::make_unique<DynCastExpr>();
+        expr->line       = line;
+        expr->column     = column;
+        expr->targetType = target;
+        expr->operand    = std::move(operand);
+        return expr;
     }
 
     ExprPtr Parser::parsePrimaryExpr() {
-        if (check(TokenType::IntLit))    return parseIntLit();
-        if (check(TokenType::FloatLit))  return parseFloatLit();
-        if (check(TokenType::DoubleLit)) return parseDoubleLit();
-        if (check(TokenType::True) || check(TokenType::False)) return parseBoolLit();
-        if (check(TokenType::CharLit))   return parseCharLit();
-        if (check(TokenType::StringLit)) return parseStringLit();
+        if (check(TokenType::IntLit))
+            return parseIntLit();
+        
+        if (check(TokenType::FloatLit))
+            return parseFloatLit();
+        
+        if (check(TokenType::DoubleLit))
+            return parseDoubleLit();
+        
+        if (check(TokenType::True) || check(TokenType::False))
+            return parseBoolLit();
+        
+        if (check(TokenType::CharLit))
+            return parseCharLit();
+        
+        if (check(TokenType::StringLit))
+            return parseStringLit();
+
+        if (check(TokenType::Null)) {
+            const Token& t = advance();
+            auto expr    = std::make_unique<NullLitExpr>();
+            expr->line   = t.line;
+            expr->column = t.column;
+            return expr;
+        }
 
         if (check(TokenType::LParen)) {
             advance();
@@ -514,8 +593,8 @@ namespace ZCompiler {
 
         advance();
 
-        auto call    = std::make_unique<CallExpr>();
-        call->line   = name.line;
+        auto call = std::make_unique<CallExpr>();
+        call->line = name.line;
         call->column = name.column;
         call->callee = name.lexeme;
 
@@ -532,16 +611,17 @@ namespace ZCompiler {
     ExprPtr Parser::parseCompareExpr() {
         ExprPtr left = parseAddExpr();
 
-        while (check(TokenType::Less)    || check(TokenType::LessEq)  ||
-               check(TokenType::Greater) || check(TokenType::GreaterEq) ||
-               check(TokenType::EqEq)   || check(TokenType::NotEq)) {
-            std::string op = peek().lexeme;
+        while (check(TokenType::Less) || check(TokenType::LessEq) || check(TokenType::Greater) || check(TokenType::GreaterEq) || check(TokenType::EqEq) || check(TokenType::NotEq)) {
+            const Token& opTok = peek();
+            std::string op = opTok.lexeme;
             advance();
             ExprPtr right = parseAddExpr();
-            auto bin  = std::make_unique<BinaryExpr>();
-            bin->op   = op;
-            bin->lhs  = std::move(left);
-            bin->rhs  = std::move(right);
+            auto bin = std::make_unique<BinaryExpr>();
+            bin->line = opTok.line;
+            bin->column = opTok.column;
+            bin->op = op;
+            bin->lhs = std::move(left);
+            bin->rhs = std::move(right);
             left = std::move(bin);
         }
 
@@ -559,10 +639,10 @@ namespace ZCompiler {
 
     ExprPtr Parser::parseCharLit() {
         const Token& t = expect(TokenType::CharLit, "expected character literal");
-        auto expr    = std::make_unique<CharLitExpr>();
-        expr->line   = t.line;
+        auto expr = std::make_unique<CharLitExpr>();
+        expr->line = t.line;
         expr->column = t.column;
-        expr->value  = static_cast<uint32_t>(std::stoul(t.lexeme));
+        expr->value = static_cast<uint32_t>(std::stoul(t.lexeme));
         return expr;
     }
 
@@ -578,30 +658,32 @@ namespace ZCompiler {
     ExprPtr Parser::parseFloatLit() {
         const Token& t = expect(TokenType::FloatLit, "expected float literal");
         std::string raw = t.lexeme;
+
         if (!raw.empty() && (raw.back() == 'f' || raw.back() == 'F'))
             raw.pop_back();
-        auto expr    = std::make_unique<FloatLitExpr>();
-        expr->line   = t.line;
+
+        auto expr = std::make_unique<FloatLitExpr>();
+        expr->line = t.line;
         expr->column = t.column;
-        expr->value  = std::stof(raw);
+        expr->value = std::stof(raw);
         return expr;
     }
 
     ExprPtr Parser::parseDoubleLit() {
         const Token& t = expect(TokenType::DoubleLit, "expected double literal");
-        auto expr    = std::make_unique<DoubleLitExpr>();
-        expr->line   = t.line;
+        auto expr = std::make_unique<DoubleLitExpr>();
+        expr->line = t.line;
         expr->column = t.column;
-        expr->value  = std::stod(t.lexeme);
+        expr->value = std::stod(t.lexeme);
         return expr;
     }
 
     ExprPtr Parser::parseStringLit() {
         const Token& t = expect(TokenType::StringLit, "expected string literal");
-        auto expr    = std::make_unique<StringLitExpr>();
-        expr->line   = t.line;
+        auto expr = std::make_unique<StringLitExpr>();
+        expr->line = t.line;
         expr->column = t.column;
-        expr->value  = t.lexeme;
+        expr->value = t.lexeme;
         return expr;
     }
 
@@ -609,13 +691,17 @@ namespace ZCompiler {
         ExprPtr left = parseAndExpr();
 
         while (check(TokenType::Or)) {
-            std::string op = peek().lexeme;
+            const Token& opTok = peek();
+            std::string op = opTok.lexeme;
             advance();
+
             ExprPtr right = parseAndExpr();
-            auto bin  = std::make_unique<BinaryExpr>();
-            bin->op   = op;
-            bin->lhs  = std::move(left);
-            bin->rhs  = std::move(right);
+            auto bin = std::make_unique<BinaryExpr>();
+            bin->line = opTok.line;
+            bin->column = opTok.column;
+            bin->op = op;
+            bin->lhs = std::move(left);
+            bin->rhs = std::move(right);
             left = std::move(bin);
         }
 
@@ -626,13 +712,17 @@ namespace ZCompiler {
         ExprPtr left = parseCompareExpr();
 
         while (check(TokenType::And)) {
-            std::string op = peek().lexeme;
+            const Token& opTok = peek();
+            std::string op = opTok.lexeme;
+
             advance();
             ExprPtr right = parseCompareExpr();
-            auto bin  = std::make_unique<BinaryExpr>();
-            bin->op   = op;
-            bin->lhs  = std::move(left);
-            bin->rhs  = std::move(right);
+            auto bin = std::make_unique<BinaryExpr>();
+            bin->line = opTok.line;
+            bin->column = opTok.column;
+            bin->op = op;
+            bin->lhs = std::move(left);
+            bin->rhs = std::move(right);
             left = std::move(bin);
         }
 
@@ -643,13 +733,17 @@ namespace ZCompiler {
         ExprPtr left = parseMulExpr();
 
         while (check(TokenType::Plus) || check(TokenType::Minus)) {
-            std::string op = peek().lexeme;
+            const Token& opTok = peek();
+            std::string op = opTok.lexeme;
+
             advance();
             ExprPtr right = parseMulExpr();
-            auto bin  = std::make_unique<BinaryExpr>();
-            bin->op   = op;
-            bin->lhs  = std::move(left);
-            bin->rhs  = std::move(right);
+            auto bin = std::make_unique<BinaryExpr>();
+            bin->line = opTok.line;
+            bin->column = opTok.column;
+            bin->op = op;
+            bin->lhs = std::move(left);
+            bin->rhs = std::move(right);
             left = std::move(bin);
         }
 
@@ -660,13 +754,17 @@ namespace ZCompiler {
         ExprPtr left = parseUnaryExpr();
 
         while (check(TokenType::Star) || check(TokenType::Slash) || check(TokenType::Percent)) {
-            std::string op = peek().lexeme;
+            const Token& opTok = peek();
+            std::string op = opTok.lexeme;
+
             advance();
             ExprPtr right = parseUnaryExpr();
-            auto bin  = std::make_unique<BinaryExpr>();
-            bin->op   = op;
-            bin->lhs  = std::move(left);
-            bin->rhs  = std::move(right);
+            auto bin = std::make_unique<BinaryExpr>();
+            bin->line = opTok.line;
+            bin->column = opTok.column;
+            bin->op = op;
+            bin->lhs = std::move(left);
+            bin->rhs = std::move(right);
             left = std::move(bin);
         }
 

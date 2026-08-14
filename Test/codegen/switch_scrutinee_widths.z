@@ -28,7 +28,7 @@ fn main() -> int {
     }                       # 22
 
     # character scrutinee — also i32
-    let c: char = 'b'
+    let c: character = 'b'
     switch (c) {
         case 'a': { print(41) }
         case 'b': { print(42) }

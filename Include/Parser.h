@@ -44,7 +44,9 @@ namespace ZCompiler {
             StmtPtr parseContinueStmt();
            
             ExprPtr parseExpr();
+            ExprPtr parseTernaryExpr();
             ExprPtr parseUnaryExpr();
+            ExprPtr parseCastExpr();
             ExprPtr parsePrimaryExpr();
             ExprPtr parseCallorIdent();
             ExprPtr parseCompareExpr();

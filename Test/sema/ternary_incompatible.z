@@ -1,0 +1,6 @@
+fn main() -> int {
+    let s: string = "a"
+    let x: int = 1 > 0 ? 1 : s
+    print(x)
+    return 0
+}

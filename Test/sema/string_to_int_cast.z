@@ -1,0 +1,5 @@
+fn main() -> int {
+    let s: string = "42"
+    print(static_cast<int>(s))
+    return 0
+}

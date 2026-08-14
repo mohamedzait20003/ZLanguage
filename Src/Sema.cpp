@@ -89,7 +89,7 @@ namespace ZCompiler {
             case TypeRef::Float:
             case TypeRef::Float16:
             case TypeRef::Double:
-            case TypeRef::Char:
+            case TypeRef::Character:
                 return true;
 
             default:
@@ -103,7 +103,7 @@ namespace ZCompiler {
             case TypeRef::Int:
             case TypeRef::Int32:
             case TypeRef::Int128:
-            case TypeRef::Char:
+            case TypeRef::Character:
                 return true;
 
             default:
@@ -129,6 +129,24 @@ namespace ZCompiler {
 
         if (fromType == toType)
             return true;
+
+        // null is assignable to any reference type, and to nothing else.
+        if (fromType == TypeRef::Null)
+            return isReferenceType(toType);
+
+        if (toType == TypeRef::Null)
+            return false;
+
+        // Boxing into dynamic is implicit; leaving dynamic never is.
+        if (toType == TypeRef::Dynamic)
+            return true;
+
+        if (fromType == TypeRef::Dynamic)
+            return false;
+
+        // string converts to nothing and nothing converts to string.
+        if (fromType == TypeRef::String || toType == TypeRef::String)
+            return false;
 
         static const TypeRef intChain[] = {
             TypeRef::Bool,
@@ -234,11 +252,15 @@ namespace ZCompiler {
                 return "double";
             case TypeRef::Bool: 
                 return "bool";
-            case TypeRef::Char: 
-                return "char";
-            case TypeRef::String: 
+            case TypeRef::Character:
+                return "character";
+            case TypeRef::String:
                 return "string";
-            default: 
+            case TypeRef::Dynamic:
+                return "dynamic";
+            case TypeRef::Null:
+                return "null";
+            default:
                 return "unknown";
         }
     }
@@ -248,7 +270,7 @@ namespace ZCompiler {
             case TypeRef::Bool:
                 return 1;
             case TypeRef::Int32:
-            case TypeRef::Char:
+            case TypeRef::Character:
                 return 32;
             case TypeRef::Int128:
                 return 128;
@@ -353,10 +375,13 @@ namespace ZCompiler {
             return expr.resolvedType = TypeRef::Bool;
 
         if (auto* clit = dynamic_cast<CharLitExpr*>(&expr))
-            return expr.resolvedType = TypeRef::Char;
+            return expr.resolvedType = TypeRef::Character;
 
         if (auto* slit = dynamic_cast<StringLitExpr*>(&expr))
             return expr.resolvedType = TypeRef::String;
+
+        if (auto* nlit = dynamic_cast<NullLitExpr*>(&expr))
+            return expr.resolvedType = TypeRef::Null;
 
         if (auto* id = dynamic_cast<IdentExpr*>(&expr))
             return expr.resolvedType = lookup(id->name, id->line, id->column);
@@ -381,21 +406,103 @@ namespace ZCompiler {
             TypeRef leftType = resolveExpr(*bin->lhs);
             TypeRef rightType = resolveExpr(*bin->rhs);
 
-            if (bin->op == "==" || bin->op == "!=" || bin->op == "<"  || bin->op == "<=" || bin->op == ">"  || bin->op == ">=") {
-                if (!isNumeric(leftType) || !isNumeric(rightType))
-                    throw std::runtime_error("comparison requires numeric types at line " + std::to_string(bin->line));
-                
+            const bool isEquality = bin->op == "==" || bin->op == "!=";
+            const bool isRelational = bin->op == "<" || bin->op == "<=" || bin->op == ">" || bin->op == ">=";
+
+            // `p == null` / `p != null` is pointer identity, not a value
+            if (isEquality && (leftType == TypeRef::Null || rightType == TypeRef::Null)) {
+                const TypeRef other = leftType == TypeRef::Null ? rightType : leftType;
+
+                if (!isReferenceType(other))
+                    throw std::runtime_error(
+                        "cannot compare '" + typeName(other) + "' to null at line "
+                        + std::to_string(bin->line) + " — only reference types can be null"
+                    );
+
                 return expr.resolvedType = TypeRef::Bool;
             }
 
-            if (bin->op == "&&" || bin->op == "||")
+            if ((isEquality || isRelational) && leftType == TypeRef::String && rightType == TypeRef::String)
                 return expr.resolvedType = TypeRef::Bool;
 
-            // Arithmetic
+            if (isEquality || isRelational) {
+                if (leftType == TypeRef::String || rightType == TypeRef::String)
+                    throw std::runtime_error(
+                        "cannot compare '" + typeName(leftType) + "' with '" + typeName(rightType)
+                        + "' at line " + std::to_string(bin->line)
+                    );
+
+                if (leftType == TypeRef::Dynamic || rightType == TypeRef::Dynamic)
+                    throw std::runtime_error(
+                        "cannot compare a 'dynamic' value directly at line " + std::to_string(bin->line)
+                        + " — extract it first with static_cast<T>(...)"
+                    );
+
+                if (!isNumeric(leftType) || !isNumeric(rightType))
+                    throw std::runtime_error("comparison requires numeric types at line " + std::to_string(bin->line));
+
+                return expr.resolvedType = TypeRef::Bool;
+            }
+
+            if (bin->op == "&&" || bin->op == "||") {
+                if (!isNumeric(leftType) || !isNumeric(rightType))
+                    throw std::runtime_error(
+                        "logical operator '" + bin->op + "' requires numeric operands at line "
+                        + std::to_string(bin->line)
+                    );
+
+                return expr.resolvedType = TypeRef::Bool;
+            }
+
+            if (bin->op == "+" && leftType == TypeRef::String && rightType == TypeRef::String)
+                return expr.resolvedType = TypeRef::String;
+
+            if (leftType == TypeRef::String || rightType == TypeRef::String)
+                throw std::runtime_error(
+                    "operator '" + bin->op + "' is not defined for string operands at line "
+                    + std::to_string(bin->line)
+                );
+
+            if (leftType == TypeRef::Dynamic || rightType == TypeRef::Dynamic)
+                throw std::runtime_error(
+                    "arithmetic on a 'dynamic' value at line " + std::to_string(bin->line)
+                    + " — extract it first with static_cast<T>(...)"
+                );
+
             if (!isNumeric(leftType) || !isNumeric(rightType))
                 throw std::runtime_error("arithmetic operator '" + bin->op + "' requires numeric types at line " + std::to_string(bin->line));
-            
+
             return expr.resolvedType = promoteArith(leftType, rightType);
+        }
+
+        if (auto* tern = dynamic_cast<TernaryExpr*>(&expr)) {
+            TypeRef condType = resolveExpr(*tern->cond);
+
+            if (!isNumeric(condType))
+                throw std::runtime_error(
+                    "ternary condition must be numeric at line " + std::to_string(tern->line)
+                );
+
+            TypeRef thenType = resolveExpr(*tern->thenExpr);
+            TypeRef elseType = resolveExpr(*tern->elseExpr);
+
+            // `cond ? s : null` resolves to the reference branch's type.
+            if (thenType == TypeRef::Null && isReferenceType(elseType))
+                return expr.resolvedType = elseType;
+
+            if (elseType == TypeRef::Null && isReferenceType(thenType))
+                return expr.resolvedType = thenType;
+
+            if (thenType == elseType)
+                return expr.resolvedType = thenType;
+
+            if (isNumeric(thenType) && isNumeric(elseType))
+                return expr.resolvedType = promoteArith(thenType, elseType);
+
+            throw std::runtime_error(
+                "ternary branches have incompatible types '" + typeName(thenType)
+                + "' and '" + typeName(elseType) + "' at line " + std::to_string(tern->line)
+            );
         }
 
         if (auto* call = dynamic_cast<CallExpr*>(&expr)) {
@@ -403,7 +510,13 @@ namespace ZCompiler {
                 if (call->args.empty())
                     throw std::runtime_error("print requires at least one argument at line " + std::to_string(call->line));
 
-                resolveExpr(*call->args[0]);
+                const TypeRef argType = resolveExpr(*call->args[0]);
+
+                if (argType == TypeRef::Null)
+                    throw std::runtime_error(
+                        "cannot print the null literal directly at line " + std::to_string(call->line)
+                    );
+
                 return expr.resolvedType = TypeRef::Int;
             }
 
@@ -430,15 +543,59 @@ namespace ZCompiler {
 
         if (auto* cast = dynamic_cast<CastExpr*>(&expr)) {
             TypeRef src = resolveExpr(*cast->operand);
-            TypeRef dst = cast->targetType;
+            checkCastable(src, cast->targetType, "static_cast", cast->line);
+            return expr.resolvedType = cast->targetType;
+        }
 
-            if ((!isNumeric(src) && src != TypeRef::Char) || (!isNumeric(dst) && dst != TypeRef::Char))
-                throw std::runtime_error("can only cast numeric types or char at line " + std::to_string(cast->line));
-            
-            return expr.resolvedType = dst;
+        if (auto* cast = dynamic_cast<DynCastExpr*>(&expr)) {
+            TypeRef src = resolveExpr(*cast->operand);
+
+            if (src != TypeRef::Dynamic)
+                throw std::runtime_error(
+                    "dynamic_cast requires a 'dynamic' operand, got '" + typeName(src)
+                    + "' at line " + std::to_string(cast->line)
+                );
+
+            checkCastable(src, cast->targetType, "dynamic_cast", cast->line);
+            return expr.resolvedType = cast->targetType;
         }
 
         throw std::runtime_error("Unhandled expression type");
+    }
+
+    void Sema::checkCastable(TypeRef src, TypeRef dst, const char* what, int line) {
+        const std::string where = std::string(what) + " at line " + std::to_string(line);
+
+        if (dst == TypeRef::Null)
+            throw std::runtime_error("cannot cast to 'null' in " + where);
+
+        if (src == TypeRef::Null) {
+            if (!isReferenceType(dst))
+                throw std::runtime_error("cannot cast null to '" + typeName(dst) + "' in " + where);
+
+            return;
+        }
+
+        // Unboxing: any concrete type may be extracted from a dynamic. The tag
+        // is verified at runtime.
+        if (src == TypeRef::Dynamic)
+            return;
+
+        // Boxing via an explicit cast is allowed and mirrors implicit boxing.
+        if (dst == TypeRef::Dynamic)
+            return;
+
+        // string converts to nothing else, and nothing else converts to string.
+        // Parsing and formatting are `string` library functions in M6.
+        if (src == TypeRef::String || dst == TypeRef::String)
+            throw std::runtime_error(
+                "cannot convert between '" + typeName(src) + "' and '" + typeName(dst) + "' in " + where
+            );
+
+        if (!isNumeric(src) || !isNumeric(dst))
+            throw std::runtime_error(
+                "cannot convert '" + typeName(src) + "' to '" + typeName(dst) + "' in " + where
+            );
     }
 
     void Sema::checkStmt(Stmt& stmt) {

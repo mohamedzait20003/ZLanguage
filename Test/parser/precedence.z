@@ -1,0 +1,14 @@
+# Pins operator precedence and associativity in the parse tree, independently of
+# whether codegen happens to produce the right number.
+
+fn main() -> int {
+    let a: int = 1 + 2 * 3          # * binds tighter than +
+    let b: int = 1 - 2 - 3          # - is left-associative
+    let c: bool = 1 < 2 && 3 > 4    # comparison binds tighter than &&
+    let d: bool = true || false && false   # && binds tighter than ||
+    let e: int = 1 > 0 ? 2 : 3      # ternary is lower than ||
+    let f: int = 1 > 0 ? 2 : 3 > 0 ? 4 : 5 # ternary is right-associative
+    let g: int = static_cast<int>(1.5)
+    let h: int = -1 + 2             # unary minus binds tightest
+    return 0
+}

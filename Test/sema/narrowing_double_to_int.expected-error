@@ -1,0 +1,1 @@
+cannot initialize variable 'n' of type 'int32' with expression of type 'double' at line 3

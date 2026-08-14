@@ -34,9 +34,21 @@ namespace ZCompiler {
         Float64,
         Double,
         Bool,
-        Char,
+        Character,
         String,
+        Dynamic,
+
+        // The type of the `null` literal before context assigns it one. Never
+        // written by the user and never the declared type of a variable — Sema
+        // only checks that it is assignable to some reference type.
+        Null,
     };
+
+    // Reference types are pointer-shaped at the LLVM level, which is what makes
+    // them assignable from `null` and comparable to it by identity.
+    inline bool isReferenceType(TypeRef type) {
+        return type == TypeRef::String || type == TypeRef::Dynamic || type == TypeRef::Null;
+    }
 
     // AST Nodes
     struct Expr : Node {
@@ -91,9 +103,22 @@ namespace ZCompiler {
         ExprPtr operand;
     };
 
+    struct NullLitExpr : Expr {};
+
     struct CastExpr : Expr {
         TypeRef targetType;
         ExprPtr operand;
+    };
+
+    struct DynCastExpr : Expr {
+        TypeRef targetType;
+        ExprPtr operand;
+    };
+
+    struct TernaryExpr : Expr {
+        ExprPtr cond;
+        ExprPtr thenExpr;
+        ExprPtr elseExpr;
     };
 
     // Statements

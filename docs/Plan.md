@@ -672,7 +672,16 @@ do {
 
 **Add:** the full primitive set: `int`, `int32`, `int64`, `int128`, `float16`, `float`, `double`, `bool`, `character`, `string`, `dynamic`; the `null` value; the ternary operator `cond ? a : b`; and `static_cast<T>(expr)` for explicit narrowing.
 
-**Status as of the current tree (M2 is landed; M3 is partially scaffolded).** M0–M2 compile and run, minus the items called out below. Several M3 pieces exist as *tokens or AST nodes with no path through the pipeline* — the enum entry is there, nothing consumes it. Work items, in dependency order:
+**Status: M3 is complete.** Every item in the list below has landed and is covered by the test suite. The list is kept as a record of what the milestone actually required — the gap between "the tokens exist" and "the feature works" was most of the work.
+
+Notes from doing it, worth carrying into later milestones:
+
+- **The `resolvedType` discipline paid for itself immediately.** Once `string`, `dynamic` and `null` all became opaque pointers, no decision could be made from the LLVM type. Every conversion now routes through one `CodeGen::convert(value, fromZType, toZType)` that knows when to box, unbox or coerce; `coerce()` remains LLVM-types-only and is never called directly from an assignment site.
+- **Assignment-shaped sites are more numerous than they look.** `let`, assignment, `return`, and *call arguments* all need the same conversion. Arguments were the easy one to miss, and needed CodeGen to record every function's Z-level signature before emitting any body.
+- **Diagnostics were silently location-less.** Every `BinaryExpr` had line 0 because the parser never stamped the operator token's position, which only became visible once M3 added error messages that pointed at binary operators. Fixed for all five builder sites.
+- **String literals are global `ZString` constants**, not `i8*`, with `mark_flags` set to `Z_GC_IMMORTAL` so the M14 collector will skip them. They are interned by value, so repeated text costs one global.
+
+Original work list, in dependency order:
 
 *Carried over from M2 — finish these first, they are cheap and the M3 table row claims them:*
 1. **`break` / `continue` are not implemented.** `TokenType::Break` and `Continue` exist in `Token.h`, but `scanIdentifierOrKeyword` never produces them, there are no `BreakStmt` / `ContinueStmt` AST nodes, no Sema context stack, and no CodeGen block stacks. Implement per the M2 spec above.
@@ -696,7 +705,7 @@ do {
 
 *Infrastructure the milestone forces:*
 
-13. **There is no runtime library and no way to link one.** `Runtime/` contains only the MLIR package, with no C runtime packages yet, and the driver's link step is `clang <obj> -o <exe>` with nothing else. M3 is the first milestone that needs C runtime code, so `zruntime` and the driver's link line both have to exist before items 10 and 11 can be tested. See the CMakeLists notes in Key Implementation Details.
+13. **There is no runtime library and no way to link one.** M3 is the first milestone that needs C runtime code, so `zruntime` and the driver's link line both have to exist before items 10 and 11 can be tested. *Landed as* `Runtime/GC`, `Runtime/String` and `Runtime/Dynamic`, aggregated by `Runtime/CMakeLists.txt` into a static `zruntime`; CMake passes the archive path to the driver as `Z_RUNTIME_LIB` so it is not hardcoded in `main.cpp`.
 14. **`Test/` is empty.** No test runner, no expected-output files, nothing to catch regressions. M3 roughly triples the type-interaction surface — the point at which "run the example and eyeball it" stops working. Stand up the `Test/{lexer,parser,sema,codegen}` layout and the runner from the Testing Strategy section as part of this milestone.
 15. **`--dump-ast` is stale.** It handles only `Return` / `Expr` / `Let` / `Assign` statements and four expression kinds; every M2 control-flow node and every M3 expression prints as `UnknownStmt` / `UnknownExpr`, which makes it useless for exactly the tests item 14 introduces.
 16. **`Include/Types.h` is empty and `TypeRef` lives in `AST.h`.** A flat enum is already strained by `float32`/`float` synonyms, and it cannot represent `vector<int>` (M11) or `tensor<float, 2, 2>` (M17b) at all. M3 does not require the full `GenericType` node from the generics decision, but it is the right moment to move type representation into `Types.h` behind a small struct so the later change is additive rather than a rewrite of every `switch` in Sema and CodeGen.

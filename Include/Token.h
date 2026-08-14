@@ -10,11 +10,11 @@ namespace ZCompiler {
         Return,
         Identifier,
         StaticCast,
+        DynamicCast,
 
         True,
         False,
         Null,
-        Nullptr,
 
         Int,
         Int32,
@@ -26,8 +26,9 @@ namespace ZCompiler {
         Float64,
         Double,
         Bool,
-        Char,
+        Character,
         String,
+        Dynamic,
 
         IntLit,
         FloatLit,
@@ -73,6 +74,8 @@ namespace ZCompiler {
         Break,
         Continue,
         
+        Question,
+
         NewLine,
         Semicolon,
         Colon,

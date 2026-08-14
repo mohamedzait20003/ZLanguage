@@ -1,0 +1,6 @@
+fn main() -> int {
+    let d: dynamic = 1
+    let n: int = d
+    print(n)
+    return 0
+}

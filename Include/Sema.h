@@ -40,6 +40,7 @@ namespace ZCompiler {
         static bool isFloat(TypeRef type);
 
         static bool canWiden(TypeRef from, TypeRef to);
+        static void checkCastable(TypeRef src, TypeRef dst, const char* what, int line);
         static TypeRef promoteArith(TypeRef a, TypeRef b);
         static std::string typeName(TypeRef type);
         static int intBitWidth(TypeRef type);

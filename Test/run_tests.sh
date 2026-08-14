@@ -140,6 +140,27 @@ actual:              $out"
     fi
 }
 
+run_ast_test() {
+    local src="$1" expected="$2" name="$3"
+    local actual
+
+    if ! actual="$("$ZC" --dump-ast "$src" 2>&1 | tr -d '\r')"; then
+        note_fail "$name" "--dump-ast failed:
+$actual"
+        return
+    fi
+
+    local want
+    want="$(tr -d '\r' < "$expected")"
+
+    if [ "$actual" = "$want" ]; then
+        note_pass "$name"
+    else
+        note_fail "$name" "AST mismatch (- want, + got):
+$(diff <(printf '%s\n' "$want") <(printf '%s\n' "$actual") | head -30)"
+    fi
+}
+
 # suite <label> <directory> <expected-extension> <runner>
 suite() {
     local label="$1" dir="$2" ext="$3" runner="$4"
@@ -176,6 +197,7 @@ suite() {
 printf 'compiler:    %s\n' "$ZC"
 printf 'opt levels:  %s\n' "$OPT_LEVELS"
 
+suite "parser (--dump-ast)"              "Test/parser"  "expected-ast"   run_ast_test
 suite "codegen (per optimisation level)" "Test/codegen" "expected"       run_output_test
 suite "sema (must fail)"                 "Test/sema"    "expected-error" run_error_test
 

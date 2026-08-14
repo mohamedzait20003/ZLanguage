@@ -83,8 +83,8 @@ namespace ZCompiler {
             type = TokenType::Double;
         else if(lexeme == "bool")
             type = TokenType::Bool;
-        else if(lexeme == "char")
-            type = TokenType::Char;
+        else if(lexeme == "character")
+            type = TokenType::Character;
         else if(lexeme == "string")
             type = TokenType::String;
         else if(lexeme == "true")
@@ -93,6 +93,12 @@ namespace ZCompiler {
             type = TokenType::False;
         else if(lexeme == "static_cast")
             type = TokenType::StaticCast;
+        else if(lexeme == "dynamic_cast")
+            type = TokenType::DynamicCast;
+        else if(lexeme == "dynamic")
+            type = TokenType::Dynamic;
+        else if(lexeme == "null")
+            type = TokenType::Null;
         else if(lexeme == "let")
             type = TokenType::Let;
         else if(lexeme == "if")
@@ -289,6 +295,8 @@ namespace ZCompiler {
                 return makeToken(TokenType::Semicolon, ";", startLine, startColumn);
             case ':':
                 return makeToken(TokenType::Colon, ":", startLine, startColumn);
+            case '?':
+                return makeToken(TokenType::Question, "?", startLine, startColumn);
             case '=':
                 if (match('='))
                     return makeToken(TokenType::EqEq, "==", startLine, startColumn);
@@ -439,8 +447,8 @@ namespace ZCompiler {
                 return "Double";
             case TokenType::Bool:
                 return "Bool";
-            case TokenType::Char:
-                return "Char";
+            case TokenType::Character:
+                return "Character";
             case TokenType::String:
                 return "String";
             case TokenType::Return:      
@@ -519,6 +527,14 @@ namespace ZCompiler {
                 return "Break";
             case TokenType::Continue:
                 return "Continue";
+            case TokenType::Dynamic:
+                return "Dynamic";
+            case TokenType::DynamicCast:
+                return "DynamicCast";
+            case TokenType::Null:
+                return "Null";
+            case TokenType::Question:
+                return "Question";
         };
 
         return "<unknown>";

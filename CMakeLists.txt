@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.20)
-project(ZCompiler LANGUAGES CXX)
+project(ZCompiler LANGUAGES C CXX)
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
@@ -48,12 +48,24 @@ if(Z_ENABLE_MLIR)
     include(TableGen)
     include(AddLLVM)
     include(AddMLIR)
+endif()
 
-    add_subdirectory(Runtime/MLIR)
+# ---------------------------------------------------------------------------
+# Z runtime — linked into compiled programs, not into zc
+# ---------------------------------------------------------------------------
+add_subdirectory(Runtime)
 
+if(Z_ENABLE_MLIR)
     target_link_libraries(zc PRIVATE ZMLIR)
     target_compile_definitions(zc PRIVATE Z_ENABLE_MLIR=1)
 endif()
+
+# The driver shells out to clang to link each compiled program, so it needs the
+# runtime archive's path. Passing it as a compile definition keeps the path in
+# one place (here) instead of hardcoded in main.cpp.
+add_dependencies(zc zruntime)
+target_compile_definitions(zc PRIVATE
+    Z_RUNTIME_LIB="$<TARGET_FILE:zruntime>")
 
 # `cmake --build build --target check` runs the whole suite.
 # Test/run_tests.sh can also be invoked directly, optionally with a name filter.

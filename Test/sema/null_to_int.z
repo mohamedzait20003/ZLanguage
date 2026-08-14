@@ -1,0 +1,5 @@
+fn main() -> int {
+    let n: int = null
+    print(n)
+    return 0
+}
