@@ -1,0 +1,17 @@
+# Pins the shape of using declarations, namespace blocks and qualified calls.
+
+using mymath
+
+namespace mymath {
+    fn square(x: int) -> int { return x * x }
+}
+
+namespace mygeom {
+    fn area(w: int, h: int) -> int { return w * h }
+}
+
+fn main() -> int {
+    print(square(2))
+    print(mygeom.area(2, 3))
+    return 0
+}

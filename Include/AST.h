@@ -84,6 +84,7 @@ namespace ZCompiler {
     };
 
     struct CallExpr : Expr {
+        std::string qualifier;
         std::string callee;
         std::vector<ExprPtr> args;
     };
@@ -195,9 +196,30 @@ namespace ZCompiler {
         std::vector<Param> params;
         TypeRef returnType = TypeRef::Int;
         std::unique_ptr<BlockStmt> body;
+
+        // Namespace this function was declared in, empty at file scope. Set by
+        // the parser when the declaration appears inside a `namespace` block,
+        // and used to mangle the emitted symbol.
+        std::string owner;
+    };
+
+    // `namespace NAME { ... }`. Several blocks with the same name merge, so this
+    // node is a contribution to a namespace rather than its definition.
+    struct NamespaceDecl : Decl {
+        std::string name;
+        std::vector<DeclPtr> decls;
+    };
+
+    // `using NAME` — a file-level import, not a declaration, so it lives beside
+    // the decl list rather than in it.
+    struct UsingDecl {
+        std::string name;
+        int line = 0;
+        int column = 0;
     };
 
     struct Program {
+        std::vector<UsingDecl> usings;
         std::vector<DeclPtr> decls;
     };
 }

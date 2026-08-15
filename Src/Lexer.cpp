@@ -123,6 +123,10 @@ namespace ZCompiler {
             type = TokenType::Break;
         else if(lexeme == "continue")
             type = TokenType::Continue;
+        else if(lexeme == "using")
+            type = TokenType::Using;
+        else if(lexeme == "namespace")
+            type = TokenType::Namespace;
         else if(lexeme == "return")
             type = TokenType::Return;
 
@@ -297,6 +301,8 @@ namespace ZCompiler {
                 return makeToken(TokenType::Colon, ":", startLine, startColumn);
             case '?':
                 return makeToken(TokenType::Question, "?", startLine, startColumn);
+            case '.':
+                return makeToken(TokenType::Dot, ".", startLine, startColumn);
             case '=':
                 if (match('='))
                     return makeToken(TokenType::EqEq, "==", startLine, startColumn);
@@ -535,6 +541,12 @@ namespace ZCompiler {
                 return "Null";
             case TokenType::Question:
                 return "Question";
+            case TokenType::Dot:
+                return "Dot";
+            case TokenType::Using:
+                return "Using";
+            case TokenType::Namespace:
+                return "Namespace";
         };
 
         return "<unknown>";

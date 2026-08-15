@@ -1,0 +1,9 @@
+namespace foo {
+    fn f() -> int { return 1 }
+}
+
+using foo
+
+fn main() -> int {
+    return f()
+}

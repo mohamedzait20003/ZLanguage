@@ -11,6 +11,7 @@ namespace ZCompiler {
     struct FuncSig {
         TypeRef returnType;
         std::vector<TypeRef> paramTypes;
+        std::string owner;
     };
 
     // Semantic Analyzer
@@ -22,8 +23,14 @@ namespace ZCompiler {
         std::vector<std::unordered_map<std::string, TypeRef>> scopes_;
         enum class Ctx { Loop, Switch };
 
+        // File-scope functions, keyed by plain name.
         std::unordered_map<std::string, FuncSig> functions_;
+        std::unordered_map<std::string, std::unordered_map<std::string, FuncSig>> namespaces_;
+
+        std::vector<std::string> imports_;
         std::vector<Ctx> contextStack_;
+
+        std::string currentNamespace_;
 
         TypeRef currentReturnType_ = TypeRef::Int;
 
@@ -45,16 +52,17 @@ namespace ZCompiler {
         static std::string typeName(TypeRef type);
         static int intBitWidth(TypeRef type);
 
-        // Constant folding for `switch` case arms. Accepts integer, character and
-        // boolean literals, optionally negated. Returns false for anything else.
         static bool constIntValue(const Expr& expr, long long& out);
-
-        // Conservative "does control always leave via return?" analysis.
         static bool alwaysReturns(const Stmt& stmt);
         static bool blockAlwaysReturns(const BlockStmt& block);
         static bool canBreakOut(const Stmt& stmt);
         static bool blockCanBreakOut(const BlockStmt& block);
 
+
+        const FuncSig* resolveCall(CallExpr& call);
+
+        void collectNamespaces(const Program& program);
+        void applyUsings(const Program& program);
 
         // Checkers
         TypeRef resolveExpr(Expr& expr);

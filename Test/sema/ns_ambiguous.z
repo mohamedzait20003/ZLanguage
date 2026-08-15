@@ -1,0 +1,14 @@
+using alpha
+using beta
+
+namespace alpha {
+    fn sort() -> int { return 1 }
+}
+
+namespace beta {
+    fn sort() -> int { return 2 }
+}
+
+fn main() -> int {
+    return sort()
+}

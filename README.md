@@ -6,7 +6,7 @@ The full design, milestone breakdown, and architectural decisions live in [docs/
 
 ## Status
 
-Milestones **M0–M3** are complete. **M17a** (MLIR foundation) is partially landed.
+Milestones **M0–M4** are complete. **M17a** (MLIR foundation) is partially landed.
 
 | Milestone | Scope | State |
 |---|---|---|
@@ -14,10 +14,13 @@ Milestones **M0–M3** are complete. **M17a** (MLIR foundation) is partially lan
 | M1 | `let`, integer arithmetic, assignment | done |
 | M2 | Functions, `if`/`else`, `while`, `for`, `do…along`, `switch`, `break`, `continue` | done |
 | M3 | Full type system — `string`, `dynamic`, `null`, ternary, casts | done |
-| M4 | Namespaces + `using` import | next |
+| M4 | Namespaces + `using` import | done |
+| M5 | Nested namespaces + dotted imports | next |
 | M17a | MLIR foundation — `z` dialect, build integration | partial |
 
 M3 delivers the complete primitive set (`int`, `int32`, `int64`, `int128`, `float16`, `float`/`float32`, `double`/`float64`, `bool`, `character`, `string`, `dynamic`), the `null` value, the ternary operator, and both `static_cast<T>` and `dynamic_cast<T>`. `string` is a real runtime type — a heap `ZString` with `+` concatenation and all six comparison operators built in, no import required. `dynamic` boxes any primitive or string with a runtime type tag.
+
+M4 adds `namespace NAME { }` and `using NAME`. This is the mechanism the standard library will use from M6 onward — there is no separate compiler registry for built-in libraries, so `using math` will work exactly the way `using mylib` does for user code.
 
 M17a has the `z` dialect compiling and the build integration behind `-DZ_ENABLE_MLIR=ON`; the emitter and lowering pipeline are not yet written. See [docs/Plan.md](docs/Plan.md).
 
@@ -40,7 +43,7 @@ This produces `build/zc`. If CMake complains that the cache was created in a dif
 **Two environment traps worth knowing**, both of which produce failures that look like compiler bugs:
 
 - **Do a full `pacman -Syu`, not a targeted install.** MSYS2 does not support partial upgrades. Installing LLVM without upgrading the rest pulls in a build made against a newer GCC runtime, and `zc.exe` then dies at startup with `STATUS_ENTRYPOINT_NOT_FOUND` (exit `127` from bash, `-1073741511` from PowerShell) — no diagnostic, nothing on stderr.
-- **`zc` links the shared `libLLVM`, so LLVM's `bin` directory must be on `PATH`** to run it. `Test/run_tests.sh` handles this automatically by reading the path CMake records in `build/llvm_bin_dir.txt`, but invoking `build/zc.exe` by hand from a shell without `C:\msys64\ucrt64\bin` on `PATH` fails the same silent way.
+- **`zc` links the shared `libLLVM`, so LLVM's `bin` directory must be on `PATH`** to run it. Both test runners handle this automatically by reading the path CMake records in `build/llvm_bin_dir.txt`, but invoking `build/zc.exe` by hand from a shell without `C:\msys64\ucrt64\bin` on `PATH` fails the same silent way.
 
 CMake links the single shared `libLLVM` when the distribution provides one (MSYS2 sets `LLVM_LINK_LLVM_DYLIB=ON`) and falls back to static component libraries otherwise. The static path is a genuine fallback rather than a preference: linking ~70 static LLVM archives exhausts the BFD linker, which fails with a bare `ld returned 5 exit status` and no further explanation.
 
@@ -52,7 +55,7 @@ CMake links the single shared `libLLVM` when the distribution provides one (MSYS
 zc program.z -o program.exe    # compile and link (-O2 by default)
 zc -O0 program.z -o program.exe
 zc --dump-tokens program.z     # token stream
-zc --dump-ast program.z        # AST (partial — see Known gaps)
+zc --dump-ast program.z        # AST
 zc --emit-llvm program.z       # LLVM IR, after the optimisation pipeline
 zc -O0 --emit-llvm program.z   # raw CodeGen output, no passes
 ```
@@ -62,31 +65,66 @@ zc -O0 --emit-llvm program.z   # raw CodeGen output, no passes
 A program:
 
 ```z
-fn factorial(n: int) -> int {
-    if (n <= 1) { return 1 }
-    return n * factorial(n - 1)
+using mymath
+
+namespace mymath {
+    fn factorial(n: int) -> int {
+        if (n <= 1) { return 1 }
+        return n * factorial(n - 1)
+    }
 }
 
 fn main() -> int {
     for (let i: int = 1; i <= 5; i = i + 1) {
         if (i % 2 == 0) { continue }
-        print(factorial(i))
+        print(factorial(i))          # imported, so no qualifier needed
     }
+
+    print(mymath.factorial(6))       # qualified access always works
     return 0
 }
 ```
 
 Statements are newline-terminated (no semicolons), declarations use `let name: type = value`, and conditions must be parenthesised.
 
+### Namespaces
+
+`using` lines come first in a file, before any declaration. Several `namespace NAME { }` blocks with the same name merge, so a namespace can be assembled from more than one place. Qualified access `NAME.fn()` needs no import.
+
+Name resolution goes innermost-first: a function inside a namespace sees its own siblings, then file scope, then whatever was imported. An unqualified name reachable from two imports is **not** an error at the `using` line — it is an error only where it is used ambiguously, and qualifying the call resolves it:
+
+```z
+using alpha
+using beta      # both export `sort` — fine on its own
+
+fn main() -> int {
+    return alpha.sort()   # unambiguous
+    # return sort()       # error: 'sort' is ambiguous — qualify the call
+}
+```
+
+Namespace-scoped functions are emitted as `NS__name`, so `mymath.square` and `mygeom.square` coexist in one module. File-scope functions keep their plain name, which is what keeps `main` callable as `main`.
+
 ## Testing
+
+Two runners, one suite. They are behavioural twins over the same fixtures and must agree — use whichever your shell supports.
 
 ```bash
 ./Test/run_tests.sh              # everything
 ./Test/run_tests.sh switch       # only tests whose name contains "switch"
+ZOPT="-O0 -O2" ./Test/run_tests.sh
 cmake --build build --target check
 ```
 
-The runner exits non-zero if anything fails, so it works as a CI gate.
+```powershell
+.\Test\run_tests.ps1
+.\Test\run_tests.ps1 -Filter switch
+.\Test\run_tests.ps1 -OptLevels '-O0','-O2'
+.\Test\run_tests.ps1 -BuildDir build-mlir
+cmake --build build --target check-ps
+```
+
+The PowerShell runner targets Windows PowerShell 5.1, so it avoids `-LeafBase`, `??`, and pipeline chain operators. Both exit non-zero if anything fails, so either works as a CI gate.
 
 Three suites, discovered by file layout — dropping in a `.z` file and its expected-output companion is all it takes to add a case:
 
@@ -96,7 +134,7 @@ Three suites, discovered by file layout — dropping in a `.z` file and its expe
 | `Test/codegen/` | `*.z` + `*.expected` | Compile, run, compare stdout — **once per optimisation level** |
 | `Test/sema/` | `*.z` + `*.expected-error` | Must **fail** to compile; diagnostic must contain the expected text |
 
-`Test/codegen/` holds both the per-milestone tour programs (`m0_hello.z`, `m1_variables.z`, `m2_control_flow.z`, `m3_types.z`) and narrow regressions pinned to specific fixed bugs. The milestone programs are annotated and double as documentation; keeping them in the suite means they are executed on every run instead of rotting. `Test/sema/` is the larger half of the value: each case asserts a program is *rejected*, and with which message.
+`Test/codegen/` holds both the per-milestone tour programs (`m0_hello.z` … `m4_namespaces.z`) and narrow regressions pinned to specific fixed bugs. The milestone programs are annotated and double as documentation; keeping them in the suite means they are executed on every run instead of rotting. `Test/sema/` is the larger half of the value: each case asserts a program is *rejected*, and with which message.
 
 Expected-error matching is a substring, not an exact match. That pins which diagnostic fired without turning every wording tweak into a failure. Output comparison strips `\r` so CRLF and LF platforms behave identically.
 
@@ -232,7 +270,7 @@ Include/        Headers — Token, AST, Lexer, Parser, Sema, CodeGen
 Src/            Implementations + the driver (main.cpp)
 Runtime/        Everything linked into or lowered for compiled programs
   MLIR/         The `z` dialect and lowering pipeline (M17a+, opt-in)
-Test/           run_tests.sh, codegen/ and sema/ suites
+Test/           run_tests.sh + run_tests.ps1, parser/ codegen/ sema/ suites
 docs/Plan.md    Design, milestones, and architectural decisions
 ```
 

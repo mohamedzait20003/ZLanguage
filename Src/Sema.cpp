@@ -5,24 +5,148 @@
 #include <algorithm>
 
 namespace ZCompiler {
-    void Sema::check(Program& program) {
-        for (const auto& decl : program.decls) {
-            if (auto* fn = dynamic_cast<FnDecl*>(decl.get())) {
-                FuncSig sig;
-                sig.returnType = fn->returnType;
+    static FuncSig signatureOf(const FnDecl& fn) {
+        FuncSig sig;
+        sig.returnType = fn.returnType;
+        sig.owner = fn.owner;
 
-                for (const auto& p : fn->params)
-                    sig.paramTypes.push_back(p.type);
-                
-                functions_[fn->name] = sig;
+        for (const auto& p : fn.params)
+            sig.paramTypes.push_back(p.type);
+
+        return sig;
+    }
+
+    void Sema::collectNamespaces(const Program& program) {
+        for (const auto& decl : program.decls) {
+            auto* ns = dynamic_cast<NamespaceDecl*>(decl.get());
+            if (!ns)
+                continue;
+
+            auto& members = namespaces_[ns->name];
+
+            for (const auto& member : ns->decls) {
+                auto* fn = dynamic_cast<FnDecl*>(member.get());
+                if (!fn)
+                    continue;
+
+                if (members.count(fn->name))
+                    throw std::runtime_error(
+                        "redeclaration of '" + fn->name + "' in namespace '" + ns->name
+                        + "' at line " + std::to_string(fn->line)
+                    );
+
+                members[fn->name] = signatureOf(*fn);
             }
         }
+    }
 
+    void Sema::applyUsings(const Program& program) {
+        for (const auto& use : program.usings) {
+            if (!namespaces_.count(use.name))
+                throw std::runtime_error(
+                    "unknown namespace '" + use.name + "' at line " + std::to_string(use.line)
+                    + ", column " + std::to_string(use.column)
+                );
+
+            if (std::find(imports_.begin(), imports_.end(), use.name) != imports_.end())
+                throw std::runtime_error(
+                    "duplicate 'using " + use.name + "' at line " + std::to_string(use.line)
+                    + ", column " + std::to_string(use.column)
+                );
+
+            imports_.push_back(use.name);
+        }
+    }
+
+    void Sema::check(Program& program) {
+        collectNamespaces(program);
+        applyUsings(program);
+
+        // Pass 1: file-scope signatures.
+        for (const auto& decl : program.decls) {
+            if (auto* fn = dynamic_cast<FnDecl*>(decl.get()))
+                functions_[fn->name] = signatureOf(*fn);
+        }
+
+        // Pass 2: bodies, file scope first, then every namespace member.
         for (const auto& decl : program.decls) {
             if (auto* fn = dynamic_cast<FnDecl*>(decl.get())) {
                 checkFnDecl(*fn);
+                continue;
+            }
+
+            if (auto* ns = dynamic_cast<NamespaceDecl*>(decl.get())) {
+                for (const auto& member : ns->decls) {
+                    if (auto* fn = dynamic_cast<FnDecl*>(member.get()))
+                        checkFnDecl(*fn);
+                }
             }
         }
+    }
+
+    const FuncSig* Sema::resolveCall(CallExpr& call) {
+        const std::string where = " at line " + std::to_string(call.line);
+
+        if (!call.qualifier.empty()) {
+            auto ns = namespaces_.find(call.qualifier);
+            if (ns == namespaces_.end())
+                throw std::runtime_error("unknown namespace '" + call.qualifier + "'" + where);
+
+            auto fn = ns->second.find(call.callee);
+            if (fn == ns->second.end())
+                throw std::runtime_error(
+                    "namespace '" + call.qualifier + "' has no function '" + call.callee + "'" + where
+                );
+
+            return &fn->second;
+        }
+
+        // Innermost scope wins: a namespace member sees its siblings before it
+        // sees file scope or anything imported.
+        if (!currentNamespace_.empty()) {
+            auto ns = namespaces_.find(currentNamespace_);
+
+            if (ns != namespaces_.end()) {
+                auto fn = ns->second.find(call.callee);
+
+                if (fn != ns->second.end()) {
+                    call.qualifier = currentNamespace_;
+                    return &fn->second;
+                }
+            }
+        }
+
+        auto local = functions_.find(call.callee);
+        if (local != functions_.end())
+            return &local->second;
+
+        const FuncSig* found = nullptr;
+        std::string foundIn;
+
+        for (const auto& nsName : imports_) {
+            auto ns = namespaces_.find(nsName);
+            if (ns == namespaces_.end())
+                continue;
+
+            auto fn = ns->second.find(call.callee);
+            if (fn == ns->second.end())
+                continue;
+
+            if (found)
+                throw std::runtime_error(
+                    "'" + call.callee + "' is ambiguous between namespaces '" + foundIn
+                    + "' and '" + nsName + "'" + where + " — qualify the call"
+                );
+
+            found = &fn->second;
+            foundIn = nsName;
+        }
+
+        if (!found)
+            throw std::runtime_error("call to undeclared function '" + call.callee + "'" + where);
+
+        call.qualifier = foundIn;
+        return found;
     }
 
 
@@ -520,11 +644,8 @@ namespace ZCompiler {
                 return expr.resolvedType = TypeRef::Int;
             }
 
-            auto it = functions_.find(call->callee);
-            if (it == functions_.end())
-                throw std::runtime_error("call to undeclared function '" + call->callee + "' at line " + std::to_string(call->line));
+            const FuncSig& sig = *resolveCall(*call);
 
-            const FuncSig& sig = it->second;
             if (call->args.size() != sig.paramTypes.size())
                 throw std::runtime_error("argument count mismatch in call to '" + call->callee + "' at line " + std::to_string(call->line));
 
@@ -814,6 +935,7 @@ namespace ZCompiler {
 
     void Sema::checkFnDecl(FnDecl& fn) {
         currentReturnType_ = fn.returnType;
+        currentNamespace_ = fn.owner;
         pushScope();
 
         for (const auto& p : fn.params)

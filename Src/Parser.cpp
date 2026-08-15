@@ -12,13 +12,26 @@ namespace ZCompiler {
         Program program;
         skipNewlines();
 
+        while (check(TokenType::Using)) {
+            program.usings.push_back(parseUsingDecl());
+            skipNewlines();
+        }
+
         while (!check(TokenType::Eof)) {
             if (check(TokenType::Fn)) {
                 program.decls.push_back(parseFnDecl());
+            } else if (check(TokenType::Namespace)) {
+                program.decls.push_back(parseNamespaceDecl());
+            } else if (check(TokenType::Using)) {
+                const Token& t = peek();
+                throw std::runtime_error(
+                    "'using' must appear before any declaration, at line " +
+                    std::to_string(t.line) + ", column " + std::to_string(t.column)
+                );
             } else {
                 const Token& t = peek();
                 throw std::runtime_error(
-                    "expected 'fn' at top level at line " + std::to_string(t.line) +
+                    "expected 'fn' or 'namespace' at top level at line " + std::to_string(t.line) +
                     ", column " + std::to_string(t.column)
                 );
             }
@@ -26,6 +39,55 @@ namespace ZCompiler {
         }
 
         return program;
+    }
+
+    UsingDecl Parser::parseUsingDecl() {
+        const Token& kw = expect(TokenType::Using, "expected 'using'");
+
+        UsingDecl decl;
+        decl.line   = kw.line;
+        decl.column = kw.column;
+        decl.name   = expect(TokenType::Identifier, "expected a namespace name after 'using'").lexeme;
+
+        if (check(TokenType::NewLine))
+            advance();
+
+        return decl;
+    }
+
+    DeclPtr Parser::parseNamespaceDecl() {
+        const Token& kw = expect(TokenType::Namespace, "expected 'namespace'");
+
+        auto decl = std::make_unique<NamespaceDecl>();
+        decl->line = kw.line;
+        decl->column = kw.column;
+        decl->name = expect(TokenType::Identifier, "expected a name after 'namespace'").lexeme;
+
+        expect(TokenType::LBrace, "expected '{' to open the namespace body");
+        skipNewlines();
+
+        while (!check(TokenType::RBrace) && !check(TokenType::Eof)) {
+            if (check(TokenType::Fn)) {
+                decl->decls.push_back(parseFnDecl(decl->name));
+            } else if (check(TokenType::Namespace)) {
+                const Token& t = peek();
+                throw std::runtime_error(
+                    "nested namespaces are not supported yet (M5) at line " +
+                    std::to_string(t.line) + ", column " + std::to_string(t.column)
+                );
+            } else {
+                const Token& t = peek();
+                throw std::runtime_error(
+                    "expected 'fn' inside namespace '" + decl->name + "' at line " +
+                    std::to_string(t.line) + ", column " + std::to_string(t.column)
+                );
+            }
+
+            skipNewlines();
+        }
+
+        expect(TokenType::RBrace, "expected '}' to close the namespace body");
+        return decl;
     }
 
     // Primitives
@@ -123,11 +185,11 @@ namespace ZCompiler {
         return block;
     }
 
-    DeclPtr Parser::parseFnDecl() {
+    DeclPtr Parser::parseFnDecl(const std::string& owner) {
         const Token& fnToken = expect(TokenType::Fn, "expected 'fn' keyword");
 
         auto decl = std::make_unique<FnDecl>();
-        
+        decl->owner = owner;
         decl->line = fnToken.line;
         decl->column = fnToken.column;
         decl->name = expect(TokenType::Identifier, "expected function name").lexeme;
@@ -564,6 +626,9 @@ namespace ZCompiler {
         }
 
         if (check(TokenType::Identifier)) {
+            if (tokens_[pos_ + 1].type == TokenType::Dot)
+                return parseCallorIdent();
+
             if (tokens_[pos_ + 1].type == TokenType::LParen)
                 return parseCallorIdent();
 
@@ -583,20 +648,41 @@ namespace ZCompiler {
     }
 
     ExprPtr Parser::parseCallorIdent() {
-        const Token& name = expect(TokenType::Identifier, "expected identifier");
+        const Token& first = expect(TokenType::Identifier, "expected identifier");
+        std::string qualifier;
+        std::string callee = first.lexeme;
+
+        if (check(TokenType::Dot)) {
+            advance();
+            qualifier = std::move(callee);
+            callee = expect(TokenType::Identifier, "expected a name after '.'").lexeme;
+
+            if (check(TokenType::Dot))
+                throw std::runtime_error(
+                    "nested namespace access is not supported yet (M5) at line " +
+                    std::to_string(first.line) + ", column " + std::to_string(first.column)
+                );
+
+            if (!check(TokenType::LParen))
+                throw std::runtime_error(
+                    "'" + qualifier + "." + callee + "' must be a function call at line " +
+                    std::to_string(first.line) + ", column " + std::to_string(first.column)
+                );
+        }
 
         if (!check(TokenType::LParen)) {
             throw std::runtime_error(
-                "bare identifier '" + name.lexeme + "' not supported yet"
+                "bare identifier '" + callee + "' not supported yet"
             );
         }
 
         advance();
 
         auto call = std::make_unique<CallExpr>();
-        call->line = name.line;
-        call->column = name.column;
-        call->callee = name.lexeme;
+        call->line = first.line;
+        call->column = first.column;
+        call->qualifier = std::move(qualifier);
+        call->callee = std::move(callee);
 
         while (!check(TokenType::RParen) && !check(TokenType::Eof)) {
             call->args.push_back(parseExpr());

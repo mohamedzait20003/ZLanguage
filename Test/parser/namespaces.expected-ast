@@ -1,0 +1,26 @@
+Program
+  Using(mymath)
+  Namespace mymath
+    Fn square(x: int) -> int
+      Return
+        Binary(*)
+          Ident(x)
+          Ident(x)
+  Namespace mygeom
+    Fn area(w: int, h: int) -> int
+      Return
+        Binary(*)
+          Ident(w)
+          Ident(h)
+  Fn main() -> int
+    ExprStmt
+      Call(print)
+        Call(square)
+          IntLit(2)
+    ExprStmt
+      Call(print)
+        Call(mygeom.area)
+          IntLit(2)
+          IntLit(3)
+    Return
+      IntLit(0)

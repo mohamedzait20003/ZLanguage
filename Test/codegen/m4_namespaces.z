@@ -1,0 +1,53 @@
+# `namespace NAME { }` groups declarations; `using NAME` imports them.
+# Qualified access NAME.fn() always works, with or without the import.
+
+using mymath
+
+namespace mymath {
+    fn square(x: int) -> int { return x * x }
+    fn cube(x: int) -> int { return x * x * x }
+}
+
+# A second block contributes to the same namespace — symbols merge.
+namespace mymath {
+    # Members see their siblings unqualified, without importing their own
+    # namespace.
+    fn fourth(x: int) -> int { return square(square(x)) }
+}
+
+# Not imported: reachable only through qualified access.
+namespace mygeom {
+    fn area(w: int, h: int) -> int { return w * h }
+    fn perimeter(w: int, h: int) -> int { return 2 * (w + h) }
+}
+
+# Same function name in two namespaces — no conflict while qualified.
+namespace stringy {
+    fn label() -> string { return "stringy" }
+}
+
+namespace numeric {
+    fn label() -> string { return "numeric" }
+}
+
+fn label() -> string { return "file scope" }
+
+fn main() -> int {
+    # imported, unqualified
+    print(square(5))            # 25
+    print(fourth(2))            # 16
+
+    # imported, but qualified anyway
+    print(mymath.cube(3))       # 27
+
+    # never imported
+    print(mygeom.area(3, 4))    # 12
+    print(mygeom.perimeter(3, 4))  # 14
+
+    # file scope wins over imports for an unqualified name
+    print(label())              # file scope
+    print(stringy.label())      # stringy
+    print(numeric.label())      # numeric
+
+    return 0
+}

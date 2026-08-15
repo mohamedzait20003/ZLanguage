@@ -1,4 +1,5 @@
 #include "CodeGen.h"
+#include "Mangler.h"
 
 #include <stdexcept>
 #include <llvm/IR/Type.h>
@@ -15,21 +16,42 @@ namespace ZCompiler {
     void CodeGen::generate(const Program& program) {
         declarePrintf();
 
+        auto record = [&](const FnDecl& fn) {
+            FnSignature sig;
+            sig.returnType = fn.returnType;
+
+            for (const auto& p : fn.params)
+                sig.paramTypes.push_back(p.type);
+
+            signatures_[mangleFunction(fn.owner, fn.name)] = std::move(sig);
+        };
+
         for (const auto& decl : program.decls) {
             if (auto* fn = dynamic_cast<const FnDecl*>(decl.get())) {
-                FnSignature sig;
-                sig.returnType = fn->returnType;
+                record(*fn);
+                continue;
+            }
 
-                for (const auto& p : fn->params)
-                    sig.paramTypes.push_back(p.type);
-
-                signatures_[fn->name] = std::move(sig);
+            if (auto* ns = dynamic_cast<const NamespaceDecl*>(decl.get())) {
+                for (const auto& member : ns->decls) {
+                    if (auto* fn = dynamic_cast<const FnDecl*>(member.get()))
+                        record(*fn);
+                }
             }
         }
 
         for (const auto& decl : program.decls) {
-            if (auto* fn = dynamic_cast<const FnDecl*>(decl.get()))
+            if (auto* fn = dynamic_cast<const FnDecl*>(decl.get())) {
                 genFnDecl(*fn);
+                continue;
+            }
+
+            if (auto* ns = dynamic_cast<const NamespaceDecl*>(decl.get())) {
+                for (const auto& member : ns->decls) {
+                    if (auto* fn = dynamic_cast<const FnDecl*>(member.get()))
+                        genFnDecl(*fn);
+                }
+            }
         }
     }
 
@@ -326,14 +348,16 @@ namespace ZCompiler {
             if (call->callee == "print")
                 return genPrint(*call);
 
-            llvm::Function* callee = module_->getFunction(call->callee);
+            const std::string symbol = mangleFunction(call->qualifier, call->callee);
+
+            llvm::Function* callee = module_->getFunction(symbol);
             if (!callee)
-                throw std::runtime_error("call to undeclared function '" + call->callee + "'");
+                throw std::runtime_error("call to undeclared function '" + symbol + "'");
 
             if (callee->arg_size() != call->args.size())
                 throw std::runtime_error("function '" + call->callee + "' expects " + std::to_string(callee->arg_size()) + " arguments, but got " + std::to_string(call->args.size()) + ")");
 
-            auto sig = signatures_.find(call->callee);
+            auto sig = signatures_.find(symbol);
 
             std::vector<llvm::Value*> args;
             for (std::size_t i = 0; i < call->args.size(); ++i) {
@@ -925,7 +949,7 @@ namespace ZCompiler {
 
         llvm::FunctionType* ft = llvm::FunctionType::get(retTy, paramTypes, false);
         llvm::Function* func = llvm::Function::Create(
-            ft, llvm::Function::ExternalLinkage, fn.name, module_.get()
+            ft, llvm::Function::ExternalLinkage, mangleFunction(fn.owner, fn.name), module_.get()
         );
 
         std::size_t i = 0;

@@ -1,0 +1,5 @@
+using nosuchns
+
+fn main() -> int {
+    return 0
+}

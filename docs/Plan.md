@@ -803,6 +803,13 @@ typedef struct ZDynamic {
 
 ### Milestone 4: Namespaces + `using` Import Syntax
 
+**Status: complete.** Two clarifications the original spec left open, resolved while implementing:
+
+- **Ambiguity is reported at the use site, not at the `using` line.** The spec's test list said "`using` both → Sema error", but the rule text said qualified access should still resolve. Erroring on the import would make the two impossible to reconcile, so importing two namespaces that share a name is allowed; only an *unqualified* use of the shared name is an error, and qualifying it resolves. This matches C# and C++ and keeps `using` cheap.
+- **A namespace member sees its siblings without importing its own namespace.** Resolution order is enclosing namespace → file scope → imports, so innermost wins. The spec did not state this, and the first implementation got it wrong: `fourth` calling `square` inside the same namespace failed to resolve until the enclosing namespace was searched first.
+
+Mangling landed as `NS__name` rather than the spec's `NS__name__<paramCodes>`. Parameter codes exist to separate overloads, and overloading is M16 — until then a name is unique within its scope and the codes would be noise. `Src/Mangler.cpp` is the single place both definitions and call sites go through, so extending the scheme is a one-function change.
+
 **Add:** the `namespace NAME { ... }` declaration and the `using NAME` import mechanism. This is the single mechanism for both user-defined libraries and the built-in stdlib — after M4, there is no special "compiler registry" for built-in libraries; they are simply namespaces defined in stdlib source files.
 
 **Why namespaces instead of a compiler registry:** a registry hard-codes which names are valid and forces every new library to modify the compiler. Namespaces let the user define `namespace mylib { ... }` in their own code and import it with `using mylib` — identical syntax to the stdlib. The built-in libraries become stdlib `.z` files that define namespaces, pre-parsed by the compiler on startup.

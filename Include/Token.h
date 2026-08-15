@@ -75,6 +75,10 @@ namespace ZCompiler {
         Continue,
         
         Question,
+        Dot,
+
+        Using,
+        Namespace,
 
         NewLine,
         Semicolon,

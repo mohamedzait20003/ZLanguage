@@ -26,7 +26,10 @@ namespace ZCompiler {
             TypeRef parseTypeRef();
             std::unique_ptr<BlockStmt> parseBlock();
 
-            DeclPtr parseFnDecl();
+            UsingDecl parseUsingDecl();
+            
+            DeclPtr parseNamespaceDecl();
+            DeclPtr parseFnDecl(const std::string& owner = "");
 
             StmtPtr parseStmt();
             StmtPtr parseLetStmt();

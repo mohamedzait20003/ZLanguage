@@ -14,6 +14,7 @@ add_executable(zc
     Src/Parser.cpp
     Src/Sema.cpp
     Src/CodeGen.cpp
+    Src/Mangler.cpp
 )
 
 target_include_directories(zc PRIVATE Include ${LLVM_INCLUDE_DIRS})
@@ -80,4 +81,18 @@ if(BASH_PROGRAM)
     )
 else()
     message(STATUS "bash not found — 'check' target unavailable")
+endif()
+
+# Same suite through the PowerShell runner. The two are behavioural twins and
+# must agree; having both means the suite runs on a machine with either shell.
+find_program(POWERSHELL_PROGRAM NAMES pwsh powershell)
+if(POWERSHELL_PROGRAM)
+    add_custom_target(check-ps
+        COMMAND ${POWERSHELL_PROGRAM} -NoProfile -ExecutionPolicy Bypass
+                -File ${CMAKE_CURRENT_SOURCE_DIR}/Test/run_tests.ps1
+        WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
+        DEPENDS zc
+        USES_TERMINAL
+        COMMENT "Running Z test suite (PowerShell)"
+    )
 endif()

@@ -91,7 +91,9 @@ static void dumpExpr(const ZCompiler::Expr& expr, int d) {
         return;
     }
     if (auto* call = dynamic_cast<const CallExpr*>(&expr)) {
-        std::cout << indent(d) << "Call(" << call->callee << ")\n";
+        std::cout << indent(d) << "Call("
+                  << (call->qualifier.empty() ? "" : call->qualifier + ".")
+                  << call->callee << ")\n";
         for (const auto& arg : call->args)
             dumpExpr(*arg, d + 1);
         return;
@@ -207,19 +209,39 @@ static void dumpStmt(const ZCompiler::Stmt& stmt, int d) {
     std::cout << indent(d) << "UnknownStmt\n";
 }
 
-static void dumpProgram(const ZCompiler::Program& prog) {
-    std::cout << "Program\n";
-    for (const auto& decl : prog.decls) {
-        if (auto* fn = dynamic_cast<const ZCompiler::FnDecl*>(decl.get())) {
-            std::cout << "  Fn " << fn->name << "(";
-            for (std::size_t i = 0; i < fn->params.size(); ++i) {
-                if (i) std::cout << ", ";
-                std::cout << fn->params[i].name << ": " << typeName(fn->params[i].type);
-            }
-            std::cout << ") -> " << typeName(fn->returnType) << "\n";
+static void dumpFn(const ZCompiler::FnDecl& fn, int d) {
+    std::cout << indent(d) << "Fn " << fn.name << "(";
+    for (std::size_t i = 0; i < fn.params.size(); ++i) {
+        if (i) std::cout << ", ";
+        std::cout << fn.params[i].name << ": " << typeName(fn.params[i].type);
+    }
+    std::cout << ") -> " << typeName(fn.returnType) << "\n";
 
-            for (const auto& stmt : fn->body->stmts)
-                dumpStmt(*stmt, 2);
+    for (const auto& stmt : fn.body->stmts)
+        dumpStmt(*stmt, d + 1);
+}
+
+static void dumpProgram(const ZCompiler::Program& prog) {
+    using namespace ZCompiler;
+
+    std::cout << "Program\n";
+
+    for (const auto& use : prog.usings)
+        std::cout << "  Using(" << use.name << ")\n";
+
+    for (const auto& decl : prog.decls) {
+        if (auto* fn = dynamic_cast<const FnDecl*>(decl.get())) {
+            dumpFn(*fn, 1);
+            continue;
+        }
+
+        if (auto* ns = dynamic_cast<const NamespaceDecl*>(decl.get())) {
+            std::cout << "  Namespace " << ns->name << "\n";
+
+            for (const auto& member : ns->decls) {
+                if (auto* fn = dynamic_cast<const FnDecl*>(member.get()))
+                    dumpFn(*fn, 2);
+            }
         }
     }
 }
