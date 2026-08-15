@@ -1,0 +1,6 @@
+using string
+
+fn main() -> int {
+    print(length(42))
+    return 0
+}

@@ -66,7 +66,11 @@ endif()
 # one place (here) instead of hardcoded in main.cpp.
 add_dependencies(zc zruntime)
 target_compile_definitions(zc PRIVATE
-    Z_RUNTIME_LIB="$<TARGET_FILE:zruntime>")
+    Z_RUNTIME_LIB="$<TARGET_FILE:zruntime>"
+    # The standard library is Z source parsed at startup, so the compiler needs
+    # to know where it lives. Baked in rather than searched for, so a build tree
+    # in any location resolves it.
+    Z_STDLIB_DIR="${CMAKE_CURRENT_SOURCE_DIR}/stdlib")
 
 # `cmake --build build --target check` runs the whole suite.
 # Test/run_tests.sh can also be invoked directly, optionally with a name filter.

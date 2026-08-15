@@ -38,28 +38,29 @@ namespace ZCompiler {
             for (const auto& p : fn.params)
                 sig.paramTypes.push_back(p.type);
 
-            signatures_[mangleFunction(fn.owner, fn.name)] = std::move(sig);
+            signatures_[fn.isExtern ? fn.name : mangleFunction(fn.owner, fn.name)] = std::move(sig);
         };
 
-        for (const auto& decl : program.decls) {
-            if (auto* fn = dynamic_cast<const FnDecl*>(decl.get())) {
-                record(*fn);
-                continue;
+        auto forEachFn = [&](const std::function<void(const FnDecl&)>& visit) {
+            for (const auto& decl : program.decls) {
+                if (auto* fn = dynamic_cast<const FnDecl*>(decl.get())) {
+                    visit(*fn);
+                    continue;
+                }
+
+                if (auto* ns = dynamic_cast<const NamespaceDecl*>(decl.get()))
+                    walkNamespace(*ns, visit);
             }
+        };
 
-            if (auto* ns = dynamic_cast<const NamespaceDecl*>(decl.get()))
-                walkNamespace(*ns, record);
-        }
-
-        for (const auto& decl : program.decls) {
-            if (auto* fn = dynamic_cast<const FnDecl*>(decl.get())) {
-                genFnDecl(*fn);
-                continue;
-            }
-
-            if (auto* ns = dynamic_cast<const NamespaceDecl*>(decl.get()))
-                walkNamespace(*ns, [&](const FnDecl& fn) { genFnDecl(fn); });
-        }
+        // Three passes, because an LLVM function must exist before anything can
+        // call it. Emitting each body as its declaration is created would break
+        // any forward reference — a function calling one defined later in the
+        // file, mutual recursion, or a user program calling into the stdlib,
+        // which is appended after the user's own declarations.
+        forEachFn(record);
+        forEachFn([&](const FnDecl& fn) { declareFnDecl(fn); });
+        forEachFn([&](const FnDecl& fn) { defineFnDecl(fn); });
     }
 
     // Private Method implementations
@@ -114,6 +115,15 @@ namespace ZCompiler {
     llvm::Function* CodeGen::runtimeFn(llvm::Function*& cache, const char* name, llvm::Type* ret, llvm::ArrayRef<llvm::Type*> params) {
         if (cache)
             return cache;
+
+        // The module may already declare this symbol: an `extern fn` in Z can
+        // name the same runtime entry point an intrinsic like `print` uses.
+        // Creating a second one makes LLVM rename it to `name.1`, which then has
+        // no definition to link against.
+        if (llvm::Function* existing = module_->getFunction(name)) {
+            cache = existing;
+            return cache;
+        }
 
         llvm::FunctionType* ft = llvm::FunctionType::get(ret, params, false);
         cache = llvm::Function::Create(ft, llvm::Function::ExternalLinkage, name, module_.get());
@@ -355,9 +365,16 @@ namespace ZCompiler {
             if (call->callee == "print")
                 return genPrint(*call);
 
-            const std::string symbol = mangleFunction(call->qualifier, call->callee);
+            // An extern function is registered under its literal C name, so try
+            // the mangled symbol first and fall back to the bare one.
+            std::string symbol = mangleFunction(call->qualifier, call->callee);
 
             llvm::Function* callee = module_->getFunction(symbol);
+            if (!callee && module_->getFunction(call->callee)) {
+                symbol = call->callee;
+                callee = module_->getFunction(symbol);
+            }
+
             if (!callee)
                 throw std::runtime_error("call to undeclared function '" + symbol + "'");
 
@@ -943,21 +960,43 @@ namespace ZCompiler {
         throw std::runtime_error("codegen: unknown statement type");
     }
 
-    void CodeGen::genFnDecl(const FnDecl& fn) {
-        scopes_.clear();
-        pushScope();
-        currentReturnType_ = fn.returnType;
+    // Creates the llvm::Function with no body. Every function in the program is
+    // declared before any body is emitted.
+    void CodeGen::declareFnDecl(const FnDecl& fn) {
+        const std::string symbol = fn.isExtern ? fn.name : mangleFunction(fn.owner, fn.name);
+
+        if (module_->getFunction(symbol))
+            return;
 
         std::vector<llvm::Type*> paramTypes;
         for (const auto& p : fn.params)
             paramTypes.push_back(llvmType(p.type));
 
         llvm::Type* retTy = (fn.name == "main") ? llvm::Type::getInt32Ty(ctx_) : llvmType(fn.returnType);
-
         llvm::FunctionType* ft = llvm::FunctionType::get(retTy, paramTypes, false);
-        llvm::Function* func = llvm::Function::Create(
-            ft, llvm::Function::ExternalLinkage, mangleFunction(fn.owner, fn.name), module_.get()
-        );
+
+        // An extern function keeps its literal C name — the runtime owns it.
+        // Everything else except `main` is internal, so the optimiser can delete
+        // whatever the program does not reach; without that the whole stdlib is
+        // emitted into every binary and globaldce cannot touch it.
+        const bool isEntryPoint = fn.name == "main" && fn.owner.empty();
+        const auto linkage = (fn.isExtern || isEntryPoint)
+            ? llvm::Function::ExternalLinkage
+            : llvm::Function::InternalLinkage;
+
+        llvm::Function::Create(ft, linkage, symbol, module_.get());
+    }
+
+    void CodeGen::defineFnDecl(const FnDecl& fn) {
+        // No body to emit — the C runtime provides the definition.
+        if (fn.isExtern)
+            return;
+
+        scopes_.clear();
+        pushScope();
+        currentReturnType_ = fn.returnType;
+
+        llvm::Function* func = module_->getFunction(mangleFunction(fn.owner, fn.name));
 
         std::size_t i = 0;
         for (auto& arg : func->args())

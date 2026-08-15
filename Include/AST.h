@@ -37,10 +37,6 @@ namespace ZCompiler {
         Character,
         String,
         Dynamic,
-
-        // The type of the `null` literal before context assigns it one. Never
-        // written by the user and never the declared type of a variable — Sema
-        // only checks that it is assignable to some reference type.
         Null,
     };
 
@@ -197,10 +193,8 @@ namespace ZCompiler {
         TypeRef returnType = TypeRef::Int;
         std::unique_ptr<BlockStmt> body;
 
-        // Namespace this function was declared in, empty at file scope. Set by
-        // the parser when the declaration appears inside a `namespace` block,
-        // and used to mangle the emitted symbol.
         std::string owner;
+        bool isExtern = false;
     };
 
     // `namespace NAME { ... }`. Several blocks with the same name merge, so this

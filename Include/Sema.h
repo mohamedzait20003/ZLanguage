@@ -12,6 +12,9 @@ namespace ZCompiler {
         TypeRef returnType;
         std::vector<TypeRef> paramTypes;
         std::string owner;
+
+        // Implemented in C: never mangled, never given a body.
+        bool isExtern = false;
     };
 
     // Semantic Analyzer

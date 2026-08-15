@@ -955,6 +955,23 @@ math.stats.mean(xs)                          # qualified
 
 ### Milestone 6: `string` Library
 
+**Status: complete**, with three deferrals and one addition the spec did not anticipate.
+
+**Deferred, because their prerequisites do not exist yet:**
+- `split` and `join` return `array<string>`. That type arrives with `structures` (M11); the spec's plan to gate them behind `using structures` cannot be implemented before the type exists.
+- `format` needs varargs, which the language does not have.
+- The spec spells construction as overloads of a single `string(...)` function. Overloading is M16, and `string` is also a type keyword, so these ship as `from_int`, `from_bool` and `from_character`. They can collapse into overloads later without changing behaviour.
+
+**Added: `extern fn`.** The stdlib-hosting decision requires libraries to be written in Z, but Z had no way to name a function implemented in C — so `stdlib/string.z` could not have been written at all. `extern fn name(params) -> type` is a declaration with no body whose symbol is never mangled, binding to the C definition. It generalises: `math` (M7) and `datetime` (M8) need exactly this to reach libm and `<time.h>`.
+
+**Three compiler changes this milestone forced**, each a pre-existing defect that the stdlib was simply the first code to trigger:
+
+- **CodeGen emitted each function body as it created the declaration**, so a call could only reach a function already emitted. Forward references were broken — `fn a() { b() }` before `b` failed — and nothing had noticed because every test defined functions before use. The stdlib is appended after the user's declarations, so every program broke at once. CodeGen now declares all functions, then defines them.
+- **`Lexer` stored a `std::string_view`**, so `Lexer lexer(readFile(path))` compiled and then read freed memory, producing a garbage character at a nonsense line and column. It now owns its source; one copy per file is not worth that trap.
+- **`runtimeFn` created declarations without checking the module**, so an `extern fn` naming a symbol that an intrinsic like `print` also uses (`z_string_cstr`) produced a second declaration, which LLVM renamed to `z_string_cstr.1` and the linker could not resolve.
+
+Two smaller consequences: namespace names now accept type keywords, because `using string` and `namespace string` must parse while `let s: string` stays a type; and all functions except `main` became `internal`, without which every binary would carry the whole standard library.
+
 **Add:** the `string` standard library, imported via `using string`. From M3 the `string` type, string literals, `+` concatenation, and the six comparison operators are already built-in. This milestone adds all named operations as **free functions** — they take the string as their first argument and are brought into scope by `using string`. There are no method calls on a string value; every named operation is a plain function call.
 
 **Design principle:** Z's `string` library follows a procedural style. `length(s)` not `s.length()`. This is consistent with how the rest of the standard library works — `using math` gives you `sqrt(x)`, not `x.sqrt()`. All functions below are available unqualified after `using string`, or qualified as `string.length(s)` without the import.

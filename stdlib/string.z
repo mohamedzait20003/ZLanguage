@@ -1,0 +1,155 @@
+# stdlib/string.z — the `string` standard library (M6).
+#
+# The `string` TYPE is a keyword primitive from M3: declarations, literals, `+`
+# concatenation, the six comparison operators, `null` and `print` all work with
+# no import. This file adds the NAMED operations, and those do require
+# `using string`.
+#
+# Everything is a free function taking the string as its first argument —
+# `length(s)`, not `s.length()`. That matches the rest of the standard library
+# (`sqrt(x)`, not `x.sqrt()`) and keeps the language free of method-call syntax
+# until classes arrive in M13.
+#
+# This file is ordinary Z source, parsed through the same pipeline as user code.
+# There is no compiler registry of built-in libraries: `using string` resolves
+# through the M4/M5 namespace mechanism exactly as `using mylib` would.
+
+namespace string {
+    # Implemented in Runtime/String/zstring_ops.c. An `extern fn` is a
+    # declaration only — its symbol is never mangled, so it binds to the C name.
+    extern fn z_string_length(s: string) -> int
+    extern fn z_string_is_empty(s: string) -> bool
+    extern fn z_string_get(s: string, index: int) -> character
+    extern fn z_string_index_of(s: string, sub: string) -> int
+    extern fn z_string_last_index_of(s: string, sub: string) -> int
+    extern fn z_string_contains(s: string, sub: string) -> bool
+    extern fn z_string_starts_with(s: string, prefix: string) -> bool
+    extern fn z_string_ends_with(s: string, suffix: string) -> bool
+    extern fn z_string_count(s: string, sub: string) -> int
+    extern fn z_string_slice(s: string, start: int, end: int) -> string
+    extern fn z_string_to_upper(s: string) -> string
+    extern fn z_string_to_lower(s: string) -> string
+    extern fn z_string_trim(s: string) -> string
+    extern fn z_string_trim_start(s: string) -> string
+    extern fn z_string_trim_end(s: string) -> string
+    extern fn z_string_replace(s: string, old_sub: string, new_sub: string) -> string
+    extern fn z_string_repeat(s: string, times: int) -> string
+    extern fn z_string_pad_left(s: string, width: int, ch: character) -> string
+    extern fn z_string_pad_right(s: string, width: int, ch: character) -> string
+    extern fn z_string_from_character(ch: character) -> string
+    extern fn z_string_from_int(value: int) -> string
+    extern fn z_string_from_bool(value: bool) -> string
+
+    # --- basic access ---------------------------------------------------------
+
+    fn length(s: string) -> int {
+        return z_string_length(s)
+    }
+
+    fn is_empty(s: string) -> bool {
+        return z_string_is_empty(s)
+    }
+
+    # Byte at `index`. Aborts if out of range — a precondition violation, not a
+    # recoverable error, per the v1 error-handling decision.
+    fn get(s: string, index: int) -> character {
+        return z_string_get(s, index)
+    }
+
+    # --- searching ------------------------------------------------------------
+
+    fn contains(s: string, sub: string) -> bool {
+        return z_string_contains(s, sub)
+    }
+
+    fn starts_with(s: string, prefix: string) -> bool {
+        return z_string_starts_with(s, prefix)
+    }
+
+    fn ends_with(s: string, suffix: string) -> bool {
+        return z_string_ends_with(s, suffix)
+    }
+
+    # Byte index of the first occurrence, or -1 when absent.
+    fn index_of(s: string, sub: string) -> int {
+        return z_string_index_of(s, sub)
+    }
+
+    fn last_index_of(s: string, sub: string) -> int {
+        return z_string_last_index_of(s, sub)
+    }
+
+    # Non-overlapping occurrences. An empty needle counts as 0 rather than
+    # matching endlessly.
+    fn count(s: string, sub: string) -> int {
+        return z_string_count(s, sub)
+    }
+
+    # --- slicing --------------------------------------------------------------
+
+    # Bytes in [start, end). Aborts if the range is invalid.
+    fn slice(s: string, start: int, end: int) -> string {
+        return z_string_slice(s, start, end)
+    }
+
+    # --- case and whitespace --------------------------------------------------
+
+    # ASCII-only: bytes outside A-Z / a-z are copied unchanged, because a
+    # byte-wise map cannot be correct for UTF-8 multi-byte sequences.
+    fn to_upper(s: string) -> string {
+        return z_string_to_upper(s)
+    }
+
+    fn to_lower(s: string) -> string {
+        return z_string_to_lower(s)
+    }
+
+    fn trim(s: string) -> string {
+        return z_string_trim(s)
+    }
+
+    fn trim_start(s: string) -> string {
+        return z_string_trim_start(s)
+    }
+
+    fn trim_end(s: string) -> string {
+        return z_string_trim_end(s)
+    }
+
+    # --- transformation -------------------------------------------------------
+
+    fn replace(s: string, old_sub: string, new_sub: string) -> string {
+        return z_string_replace(s, old_sub, new_sub)
+    }
+
+    fn repeat(s: string, times: int) -> string {
+        return z_string_repeat(s, times)
+    }
+
+    fn pad_left(s: string, width: int, ch: character) -> string {
+        return z_string_pad_left(s, width, ch)
+    }
+
+    fn pad_right(s: string, width: int, ch: character) -> string {
+        return z_string_pad_right(s, width, ch)
+    }
+
+    # --- construction ---------------------------------------------------------
+    #
+    # The plan spells these as overloads of a single `string(...)` function.
+    # Overloading is M16, and `string` is also a type keyword, so they carry
+    # distinct names for now; they can become overloads without changing
+    # behaviour once M16 lands.
+
+    fn from_character(ch: character) -> string {
+        return z_string_from_character(ch)
+    }
+
+    fn from_int(value: int) -> string {
+        return z_string_from_int(value)
+    }
+
+    fn from_bool(value: bool) -> string {
+        return z_string_from_bool(value)
+    }
+}

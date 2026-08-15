@@ -6,6 +6,7 @@
 add_library(zruntime STATIC
     GC/zgc.c
     String/zstring.c
+    String/zstring_ops.c
     Dynamic/zdynamic.c
 )
 

@@ -6,7 +6,7 @@
 #include <stdexcept>
 
 namespace ZCompiler {
-    Lexer::Lexer(std::string_view source) : source_(source) {}
+    Lexer::Lexer(std::string source) : source_(std::move(source)) {}
 
     // Primitives
     bool Lexer::isAtEnd() const {
@@ -127,6 +127,8 @@ namespace ZCompiler {
             type = TokenType::Using;
         else if(lexeme == "namespace")
             type = TokenType::Namespace;
+        else if(lexeme == "extern")
+            type = TokenType::Extern;
         else if(lexeme == "return")
             type = TokenType::Return;
 
@@ -547,6 +549,8 @@ namespace ZCompiler {
                 return "Using";
             case TokenType::Namespace:
                 return "Namespace";
+            case TokenType::Extern:
+                return "Extern";
         };
 
         return "<unknown>";

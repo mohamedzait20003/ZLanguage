@@ -9,6 +9,7 @@ namespace ZCompiler {
         FuncSig sig;
         sig.returnType = fn.returnType;
         sig.owner = fn.owner;
+        sig.isExtern = fn.isExtern;
 
         for (const auto& p : fn.params)
             sig.paramTypes.push_back(p.type);
@@ -974,6 +975,11 @@ namespace ZCompiler {
     }
 
     void Sema::checkFnDecl(FnDecl& fn) {
+        // `extern fn` is a declaration only — its definition is in the C runtime,
+        // so there is nothing here to type-check.
+        if (fn.isExtern)
+            return;
+
         currentReturnType_ = fn.returnType;
         currentNamespace_ = fn.owner;
         pushScope();

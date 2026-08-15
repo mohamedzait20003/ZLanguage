@@ -81,6 +81,7 @@ namespace ZCompiler {
             void declarePrintf();
             void startDeadBlock();
             void genStmt(const Stmt& stmt);
-            void genFnDecl(const FnDecl& fn);
+            void declareFnDecl(const FnDecl& fn);
+            void defineFnDecl(const FnDecl& fn);
     };
 }

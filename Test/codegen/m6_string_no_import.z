@@ -1,0 +1,24 @@
+# Everything the `string` TYPE can do without `using string`. M3 built-ins are
+# never gated behind the M6 library: only the NAMED operations require the
+# import.
+
+fn main() -> int {
+    let s: string = "hello"
+    let t: string = " world"
+
+    print(s)                    # declaration, literal, print
+    print(s + t)                # `+` concatenation
+    print(s == "hello")         # equality
+    print(s != "hello")
+    print("abc" < "abd")        # ordering
+    print("abc" >= "abc")
+
+    let n: string = null        # null assignment
+    print(n == null)            # null comparison by identity
+    print(s == null)
+
+    # qualified access reaches the library without importing it
+    print(string.length(s))     # 5
+
+    return 0
+}

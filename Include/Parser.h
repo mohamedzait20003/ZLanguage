@@ -28,13 +28,15 @@ namespace ZCompiler {
 
             UsingDecl parseUsingDecl();
 
-            // `parentPath` is the enclosing namespace's fully qualified dotted
-            // name, empty at file scope. Nested blocks append to it.
             DeclPtr parseNamespaceDecl(const std::string& parentPath = "");
             DeclPtr parseFnDecl(const std::string& owner = "");
 
-            // Reads `A`, `A.B`, `A.B.C`, … and returns it dotted.
+
             std::string parseDottedName(const char* what);
+
+            // A namespace may be named after a type keyword — the standard
+            static bool isNameLike(TokenType type);
+            std::string takeName(const char* what);
 
             StmtPtr parseStmt();
             StmtPtr parseLetStmt();

@@ -1,0 +1,7 @@
+using string
+
+fn main() -> int {
+    let s: string = "hello"
+    print(string.nosuchfunction(s))
+    return 0
+}

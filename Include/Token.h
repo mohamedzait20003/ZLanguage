@@ -79,6 +79,7 @@ namespace ZCompiler {
 
         Using,
         Namespace,
+        Extern,
 
         NewLine,
         Semicolon,

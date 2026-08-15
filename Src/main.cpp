@@ -4,6 +4,9 @@
 #include "CodeGen.h"
 
 #include <string>
+#include <vector>
+#include <algorithm>
+#include <filesystem>
 #include <cstdlib>
 #include <fstream>
 #include <sstream>
@@ -258,6 +261,98 @@ static void dumpProgram(const ZCompiler::Program& prog) {
     }
 }
 
+static std::string readFile(const std::string& path) {
+    std::ifstream in(path, std::ios::binary);
+    if (!in)
+        throw std::runtime_error("cannot open '" + path + "'");
+
+    std::ostringstream buf;
+    buf << in.rdbuf();
+    return buf.str();
+}
+
+// The standard library is ordinary Z source, not compiler-synthesised
+// declarations. Every stdlib file is parsed through the same pipeline as user
+// code and its namespaces are merged into the program, so `using string`
+// resolves through the M4/M5 namespace mechanism with no special registry.
+//
+// Every file is parsed regardless of what the program imports: qualified access
+// (`string.length(s)`) is valid without a `using`, so the namespaces have to
+// exist before Sema runs. Unused functions cost nothing in the output — they are
+// emitted with internal linkage and deleted by globaldce.
+static void loadStdlib(ZCompiler::Program& program, const std::string& stdlibDir) {
+    namespace fs = std::filesystem;
+
+    std::error_code ec;
+    if (!fs::is_directory(stdlibDir, ec))
+        return;
+
+    std::vector<std::string> files;
+    for (const auto& entry : fs::directory_iterator(stdlibDir, ec))
+        if (entry.is_regular_file() && entry.path().extension() == ".z")
+            files.push_back(entry.path().string());
+
+    // Deterministic order, so a duplicate-symbol diagnostic never depends on
+    // how the filesystem happened to enumerate the directory.
+    std::sort(files.begin(), files.end());
+
+    for (const auto& file : files) {
+        // A diagnostic from a stdlib file is useless without its name — the user
+        // did not write this code and has no other way to locate the line.
+        auto located = [&file](const std::exception& e) {
+            return std::runtime_error("in stdlib file '" + file + "': " + e.what());
+        };
+
+        ZCompiler::Program lib;
+        try {
+            ZCompiler::Lexer lexer(readFile(file));
+            ZCompiler::Parser parser(lexer.tokenize());
+            lib = parser.parse();
+        } catch (const std::exception& e) {
+            throw located(e);
+        }
+
+        if (!lib.usings.empty())
+            throw std::runtime_error("stdlib file '" + file + "' may not contain 'using' declarations");
+
+        for (auto& decl : lib.decls) {
+            // Only namespaces are merged. A bare function in a stdlib file would
+            // land in the user's file scope and silently shadow their own names.
+            if (!dynamic_cast<ZCompiler::NamespaceDecl*>(decl.get()))
+                throw std::runtime_error(
+                    "stdlib file '" + file + "' may only declare namespaces at top level");
+
+            program.decls.push_back(std::move(decl));
+        }
+    }
+}
+
+// stdlib/ sits next to the repository, not next to the binary, so it is located
+// relative to the executable and then by walking up. Z_STDLIB_DIR from CMake is
+// the authoritative answer; the search is a fallback for a relocated binary.
+static std::string findStdlib(const char* argv0) {
+    namespace fs = std::filesystem;
+    std::error_code ec;
+
+#ifdef Z_STDLIB_DIR
+    if (fs::is_directory(Z_STDLIB_DIR, ec))
+        return Z_STDLIB_DIR;
+#endif
+
+    fs::path dir = fs::absolute(fs::path(argv0), ec).parent_path();
+
+    for (int depth = 0; depth < 4 && !dir.empty(); ++depth) {
+        const fs::path candidate = dir / "stdlib";
+
+        if (fs::is_directory(candidate, ec))
+            return candidate.string();
+
+        dir = dir.parent_path();
+    }
+
+    return {};
+}
+
 int main(int argc, char* argv[]) {
     bool dumpTokens = false;
     bool dumpAst = false;
@@ -319,10 +414,14 @@ int main(int argc, char* argv[]) {
         ZCompiler::Parser parser(tokens);
         ZCompiler::Program program = parser.parse();
 
+        // --dump-ast shows the user's program alone; merging the stdlib in first
+        // would bury it under hundreds of library declarations.
         if (dumpAst) {
             dumpProgram(program);
             return 0;
         }
+
+        loadStdlib(program, findStdlib(argv[0]));
 
         ZCompiler::Sema sema;
         sema.check(program);

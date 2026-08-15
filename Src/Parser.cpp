@@ -1,6 +1,5 @@
 #include "Parser.h"
 
-#include <cctype>
 #include <string>
 #include <cstdint>
 #include <stdexcept>
@@ -18,7 +17,7 @@ namespace ZCompiler {
         }
 
         while (!check(TokenType::Eof)) {
-            if (check(TokenType::Fn)) {
+            if (check(TokenType::Fn) || check(TokenType::Extern)) {
                 program.decls.push_back(parseFnDecl());
             } else if (check(TokenType::Namespace)) {
                 program.decls.push_back(parseNamespaceDecl());
@@ -31,7 +30,7 @@ namespace ZCompiler {
             } else {
                 const Token& t = peek();
                 throw std::runtime_error(
-                    "expected 'fn' or 'namespace' at top level at line " + std::to_string(t.line) +
+                    "expected 'fn', 'extern fn' or 'namespace' at top level at line " + std::to_string(t.line) +
                     ", column " + std::to_string(t.column)
                 );
             }
@@ -41,12 +40,50 @@ namespace ZCompiler {
         return program;
     }
 
+    // `string` is a type keyword, but `using string` and `namespace string` must
+    // work — the standard library is named after the type it extends. Accepting
+    // primitive-type keywords only where a *name* is expected keeps this from
+    // affecting type positions such as `let s: string`.
+    bool Parser::isNameLike(TokenType type) {
+        switch (type) {
+            case TokenType::Identifier:
+            case TokenType::String:
+            case TokenType::Dynamic:
+            case TokenType::Character:
+            case TokenType::Bool:
+            case TokenType::Int:
+            case TokenType::Int32:
+            case TokenType::Int64:
+            case TokenType::Int128:
+            case TokenType::Float:
+            case TokenType::Float16:
+            case TokenType::Float32:
+            case TokenType::Float64:
+            case TokenType::Double:
+                return true;
+            default:
+                return false;
+        }
+    }
+
+    std::string Parser::takeName(const char* what) {
+        if (!isNameLike(peek().type)) {
+            const Token& t = peek();
+            throw std::runtime_error(
+                std::string(what) + " at line " + std::to_string(t.line) +
+                ", column " + std::to_string(t.column) + " (got '" + t.lexeme + "')"
+            );
+        }
+
+        return advance().lexeme;
+    }
+
     std::string Parser::parseDottedName(const char* what) {
-        std::string path = expect(TokenType::Identifier, what).lexeme;
+        std::string path = takeName(what);
 
         while (check(TokenType::Dot)) {
             advance();
-            path += "." + expect(TokenType::Identifier, "expected a name after '.'").lexeme;
+            path += "." + takeName("expected a name after '.'");
         }
 
         return path;
@@ -69,7 +106,7 @@ namespace ZCompiler {
     DeclPtr Parser::parseNamespaceDecl(const std::string& parentPath) {
         const Token& kw = expect(TokenType::Namespace, "expected 'namespace'");
 
-        const std::string leaf = expect(TokenType::Identifier, "expected a name after 'namespace'").lexeme;
+        const std::string leaf = takeName("expected a name after 'namespace'");
 
         // Nesting is carried in the fully qualified name, so `math.integral` is
         // a namespace in its own right rather than a child that only exists
@@ -84,7 +121,7 @@ namespace ZCompiler {
         skipNewlines();
 
         while (!check(TokenType::RBrace) && !check(TokenType::Eof)) {
-            if (check(TokenType::Fn)) {
+            if (check(TokenType::Fn) || check(TokenType::Extern)) {
                 decl->decls.push_back(parseFnDecl(decl->name));
             } else if (check(TokenType::Namespace)) {
                 decl->decls.push_back(parseNamespaceDecl(decl->name));
@@ -199,9 +236,14 @@ namespace ZCompiler {
     }
 
     DeclPtr Parser::parseFnDecl(const std::string& owner) {
+        const bool isExtern = check(TokenType::Extern);
+        if (isExtern)
+            advance();
+
         const Token& fnToken = expect(TokenType::Fn, "expected 'fn' keyword");
 
         auto decl = std::make_unique<FnDecl>();
+        decl->isExtern = isExtern;
         decl->owner = owner;
         decl->line = fnToken.line;
         decl->column = fnToken.column;
@@ -221,6 +263,15 @@ namespace ZCompiler {
         expect(TokenType::Arrow, "expected '->' after parameter list");
 
         decl->returnType = parseTypeRef();
+
+        // An extern function is a declaration only — the definition lives in the
+        // C runtime, so there is no block to parse.
+        if (decl->isExtern) {
+            if (check(TokenType::NewLine))
+                advance();
+
+            return decl;
+        }
 
         skipNewlines();
         decl->body = parseBlock();
@@ -638,6 +689,12 @@ namespace ZCompiler {
             return e;
         }
 
+        // A name followed by a dot is always a qualified call: a local variable
+        // can never be followed by one. Admitting type keywords here is what
+        // makes `string.slice(...)` reachable without `using string`.
+        if (isNameLike(peek().type) && tokens_[pos_ + 1].type == TokenType::Dot)
+            return parseCallorIdent();
+
         if (check(TokenType::Identifier)) {
             if (tokens_[pos_ + 1].type == TokenType::Dot)
                 return parseCallorIdent();
@@ -661,9 +718,9 @@ namespace ZCompiler {
     }
 
     ExprPtr Parser::parseCallorIdent() {
-        const Token& first = expect(TokenType::Identifier, "expected identifier");
+        const Token& first = peek();
         std::string qualifier;
-        std::string callee = first.lexeme;
+        std::string callee = takeName("expected identifier");
 
         // `a.b.c.fn(args)` — the final segment is the function, everything before
         // it is the dotted namespace path. Any depth parses; whether the path
@@ -672,7 +729,7 @@ namespace ZCompiler {
             advance();
 
             qualifier = qualifier.empty() ? callee : qualifier + "." + callee;
-            callee = expect(TokenType::Identifier, "expected a name after '.'").lexeme;
+            callee = takeName("expected a name after '.'");
         }
 
         // Namespaces hold only functions, so a qualified name that is not

@@ -9,14 +9,14 @@
 namespace ZCompiler {
     class Lexer {
         public:
-            explicit Lexer(std::string_view source);
+            explicit Lexer(std::string source);
             std::vector<Token> tokenize();
 
         private:
             int line_ = 1;
             int column_ = 1;
             std::size_t pos_ = 0;
-            std::string_view source_;
+            std::string source_;
             
             // Primitives
             char advance();

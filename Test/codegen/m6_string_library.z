@@ -1,0 +1,68 @@
+# The `string` library: every named operation is a free function taking the
+# string as its first argument. `length(s)`, not `s.length()`.
+#
+# The library is self-hosted in stdlib/string.z as `namespace string { }`, so
+# `using string` resolves through the ordinary M4/M5 namespace mechanism — there
+# is no compiler registry of built-in libraries.
+
+using string
+
+fn main() -> int {
+    let s: string = "  Hello, World  "
+    let t: string = "Hello, World"
+
+    # --- basic access ---
+    print(length(t))                    # 12
+    print(is_empty(""))                 # 1
+    print(is_empty(t))                  # 0
+    print(get(t, 0))                    # H
+
+    # --- searching ---
+    print(contains(t, "World"))         # 1
+    print(contains(t, "world"))         # 0  case-sensitive
+    print(starts_with(t, "Hello"))      # 1
+    print(ends_with(t, "World"))        # 1
+    print(index_of(t, "o"))             # 4
+    print(last_index_of(t, "o"))        # 8
+    print(index_of(t, "zzz"))           # -1  absent
+    print(count("aaaa", "aa"))          # 2   non-overlapping
+
+    # --- slicing ---
+    print(slice(t, 0, 5))               # Hello
+    print(slice(t, 7, 12))              # World
+    print(slice(t, 3, 3))               # (empty line)
+
+    # --- case and whitespace ---
+    print(to_upper(t))                  # HELLO, WORLD
+    print(to_lower(t))                  # hello, world
+    print(trim(s))                      # Hello, World
+    print(trim_start(s) + "|")          # Hello, World  |
+    print("|" + trim_end(s))            # |  Hello, World
+
+    # --- transformation ---
+    print(replace(t, "World", "Z"))     # Hello, Z
+    print(replace(t, "l", "L"))         # HeLLo, WorLd
+    print(replace(t, "zzz", "!"))       # Hello, World  no match
+    print(repeat("ab", 3))              # ababab
+    print(repeat("ab", 0))              # (empty line)
+    print(pad_left("7", 3, '0'))        # 007
+    print(pad_right("7", 3, '.'))       # 7..
+    print(pad_left("toolong", 2, '0'))  # toolong  never truncates
+
+    # --- construction ---
+    print(from_int(0))                  # 0
+    print(from_int(-42))                # -42
+    print(from_int(9223372036854775807))# int64 max
+    print(from_bool(true))              # true
+    print(from_character('Z'))          # Z
+
+    # --- qualified access needs no import ---
+    print(string.length("abc"))         # 3
+    print(string.to_upper("abc"))       # ABC
+
+    # --- composes with the M3 built-in operators ---
+    print(to_upper(trim(s)) + "!")      # HELLO, WORLD!
+    print(length(trim(s)) == 12)        # 1
+
+    return 0
+}

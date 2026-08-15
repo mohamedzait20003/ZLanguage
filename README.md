@@ -6,7 +6,7 @@ The full design, milestone breakdown, and architectural decisions live in [docs/
 
 ## Status
 
-Milestones **M0–M5** are complete. **M17a** (MLIR foundation) is partially landed.
+Milestones **M0–M6** are complete. **M17a** (MLIR foundation) is partially landed.
 
 | Milestone | Scope | State |
 |---|---|---|
@@ -16,12 +16,15 @@ Milestones **M0–M5** are complete. **M17a** (MLIR foundation) is partially lan
 | M3 | Full type system — `string`, `dynamic`, `null`, ternary, casts | done |
 | M4 | Namespaces + `using` import | done |
 | M5 | Nested namespaces + dotted imports | done |
-| M6 | `string` library | next |
+| M6 | `string` library — first self-hosted stdlib | done |
+| M7 | `math` library | next |
 | M17a | MLIR foundation — `z` dialect, build integration | partial |
 
 M3 delivers the complete primitive set (`int`, `int32`, `int64`, `int128`, `float16`, `float`/`float32`, `double`/`float64`, `bool`, `character`, `string`, `dynamic`), the `null` value, the ternary operator, and both `static_cast<T>` and `dynamic_cast<T>`. `string` is a real runtime type — a heap `ZString` with `+` concatenation and all six comparison operators built in, no import required. `dynamic` boxes any primitive or string with a runtime type tag.
 
-M4–M5 add `namespace NAME { }` with nesting, and `using NAME` / `using A.B`. This is the mechanism the standard library will use from M6 onward — there is no separate compiler registry for built-in libraries, so `using math` will work exactly the way `using mylib` does for user code.
+M4–M5 add `namespace NAME { }` with nesting, and `using NAME` / `using A.B`.
+
+M6 is the first library to use that mechanism. `stdlib/string.z` is ordinary Z source defining `namespace string { }`, pre-parsed by the compiler and merged into the program, so `using string` resolves exactly the way `using mylib` does for user code — there is no compiler registry of built-in libraries. It also adds `extern fn`, which is how Z declares a function implemented in the C runtime.
 
 M17a has the `z` dialect compiling and the build integration behind the `clang-mlir` preset; the emitter and lowering pipeline are not yet written. See [docs/Plan.md](docs/Plan.md).
 
@@ -43,26 +46,45 @@ cmake --build --preset clang
 
 | Preset | Compiler | Build dir | Notes |
 |---|---|---|---|
-| `clang` | clang 22 | `build/` | Default. What `.vscode/c_cpp_properties.json` is configured against. |
+| `clang` | clang 22 | `build/` | Default. What clangd is configured against. |
 | `clang-mlir` | clang 22 | `build/` | Adds the M17a `z` dialect (`Z_ENABLE_MLIR=ON`). |
 | `gcc` | GCC 16 | `build-gcc/` | Kept green so the project is not locked to one compiler. |
 
 This produces `build/zc`. If CMake complains that the cache was created in a different directory, delete `build/` and re-configure.
 
-**Why clang.** Either compiler builds `zc` cleanly and passes the whole suite — GCC was simply the MSYS2 UCRT64 default before the choice was made explicit. clang is preferred for three reasons that matter to this project specifically: `clangd` consumes `compile_commands.json` directly and gives far better editor support than a hand-maintained include path; its template and overload diagnostics are clearer in a codebase leaning on `dynamic_cast` dispatch and LLVM's templates; and ASan/UBSan are usable on Windows with clang but effectively not with MinGW GCC — which will matter once the garbage collector lands in M14. The `gcc` preset stays in CI range so neither path silently rots.
+**Why clang.** Either compiler builds `zc` cleanly and passes the whole suite — GCC was simply the MSYS2 UCRT64 default before the choice was made explicit. clang is preferred for three reasons that matter to this project specifically: `clangd` consumes `compile_commands.json` directly, which is what the editor setup below relies on; its template and overload diagnostics are clearer in a codebase leaning on `dynamic_cast` dispatch and LLVM's templates; and ASan/UBSan are usable on Windows with clang but effectively not with MinGW GCC — which will matter once the garbage collector lands in M14. The `gcc` preset stays in CI range so neither path silently rots.
 
 ### Editor setup
 
-`.vscode/c_cpp_properties.json` lists the toolchain's system include directories **explicitly**, and deliberately does *not* set `compileCommands`. That looks redundant next to `build/compile_commands.json`, so it is worth knowing why:
+The project uses **clangd**, not the Microsoft C/C++ extension's IntelliSense. clangd reads `build/compile_commands.json` directly and derives system include paths from the compiler named in each entry, so there is no include path to maintain by hand and nothing to re-point when the toolchain moves.
 
-- When `compileCommands` is set, the C/C++ extension **ignores `includePath` for any file in the database** and takes that file's configuration from the database entry alone. Those entries contain only `-IInclude` — a compiler never puts its built-in system paths on a command line — so the extension has to recover them by *querying* the compiler. When that query fails, IntelliSense ends up with no system includes at all and reports `cannot open source file "string"` on every file, while the real build succeeds.
-- Listing the paths in `includePath` with `**` globs (`include/c++/**`, `lib/clang/**`) removes the dependency on that query, and the globs survive toolchain upgrades — which matters, because a GCC 15 → 16 upgrade is what first broke this: libstdc++ lives in a version-numbered directory and the cached path pointed at one that no longer existed.
+```bash
+pacman -S mingw-w64-ucrt-x86_64-clang-tools-extra
+code --install-extension llvm-vs-code-extensions.vscode-clangd
+```
 
-If squiggles persist after editing this file, run **C/C++: Reset IntelliSense Database** from the command palette — the extension caches resolved paths and will keep serving stale ones.
+`.vscode/settings.json` wires it up and sets `C_Cpp.intelliSenseEngine: disabled`. **Both engines must not run at once** — the Microsoft extension keeps reporting its own diagnostics otherwise, and you get every error twice. That setting only takes effect after a window reload.
 
-`compilerPath` and `intelliSenseMode` must still match the preset you build with (`clang++.exe` / `windows-clang-x64` for `clang`, `c++.exe` / `windows-gcc-x64` for `gcc`).
+Verify clangd independently of the editor, which is worth doing before blaming your setup:
 
-**The permanent fix is clangd**, which reads `compile_commands.json` directly and needs none of this. Install the `llvm-vs-code-extensions.vscode-clangd` extension and disable the Microsoft extension's IntelliSense engine; the project already emits `compile_commands.json` on every configure.
+```bash
+clangd --compile-commands-dir=build --check=Src/Parser.cpp
+```
+
+It prints the exact compiler invocation it derived and ends with `All checks completed, N errors`. Note that `--check` also probes every refactoring action at every cursor position, so lines like `tweak: ExtractFunction ==> FAIL` are not code diagnostics — count only lines matching `file:line:col: error:`.
+
+<details>
+<summary>Why not the Microsoft extension (history worth keeping)</summary>
+
+Three attempts failed before switching, and the reasons are instructive:
+
+- A **GCC 15 → 16 upgrade** deleted `include/c++/15.2.0`, and the extension's cached configuration still pointed there. libstdc++ lives in a version-numbered directory, so any pinned path goes stale on every toolchain upgrade.
+- `compilerPath` named a **different compiler than the build used**, and the extension derives system includes by querying that binary.
+- Most subtly: when `compileCommands` is set, the extension **ignores `includePath` for any file in the database**. Database entries carry only `-IInclude` — a compiler never puts built-in system paths on a command line — so it must recover them by querying the compiler, and when that query fails the file ends up with *no* system includes at all. That is why `Mangler.h` (a header, absent from the database) and `Parser.cpp` (present in it) behaved differently.
+
+clangd has none of these failure modes because it uses the compile command's own driver.
+
+</details>
 
 **Two environment traps worth knowing**, both of which produce failures that look like compiler bugs:
 
@@ -156,6 +178,42 @@ fn main() -> int {
 ```
 
 Namespace-scoped functions are emitted as `NS__name`, one `__` per level: `math.stats.deep.buried` becomes `math__stats__deep__buried`. File-scope functions keep their plain name, which is what keeps `main` callable as `main`.
+
+### The `string` library
+
+The `string` **type** needs no import: declarations, literals, `+`, the six comparisons, `null` and `print` are language built-ins from M3. The **named operations** are the M6 library and do require `using string`.
+
+```z
+using string
+
+fn main() -> int {
+    let s: string = "  Hello, World  "
+
+    print(length(trim(s)))          # 12
+    print(to_upper(trim(s)))        # HELLO, WORLD
+    print(replace(trim(s), "World", "Z"))
+    print(pad_left(from_int(7), 3, '0'))    # 007
+
+    print(string.slice("abcdef", 1, 4))     # bcd — qualified, no import needed
+    return 0
+}
+```
+
+Everything is a free function taking the string first — `length(s)`, not `s.length()` — matching the rest of the standard library and keeping method-call syntax out of the language until classes arrive in M13.
+
+Available: `length` `is_empty` `get` · `contains` `starts_with` `ends_with` `index_of` `last_index_of` `count` · `slice` · `to_upper` `to_lower` `trim` `trim_start` `trim_end` · `replace` `repeat` `pad_left` `pad_right` · `from_int` `from_bool` `from_character`.
+
+**It is written in Z.** `stdlib/string.z` defines `namespace string { }` and is parsed through the same pipeline as user code, then merged into the program before Sema runs. `using string` resolves through the ordinary namespace mechanism — there is no registry of built-in library names in the compiler. Each function wraps a C runtime entry point declared with `extern fn`:
+
+```z
+namespace string {
+    extern fn z_string_length(s: string) -> int
+
+    fn length(s: string) -> int { return z_string_length(s) }
+}
+```
+
+`extern fn` is a declaration with no body whose symbol is never mangled, so it binds to the C definition in `Runtime/String/`. It is the general mechanism for reaching the runtime, and `math` (M7) and `datetime` (M8) will use it to reach libm and `<time.h>`.
 
 ## Testing
 
@@ -309,17 +367,20 @@ entry:
 }
 ```
 
-### A known limitation in what we emit
+### Linkage, and why it matters here
 
-`CodeGen::genFnDecl` gives every function `ExternalLinkage`, including ones only called locally. LLVM therefore cannot delete a function even after inlining it into every caller. In `all_paths_return.z` at `-O2`, all four helpers are fully inlined and constant-folded into `main` — which becomes seven `printf` calls with literal arguments — yet all four definitions survive as unreachable code.
+Only `main` is emitted with `ExternalLinkage`. Every other Z function is `internal`, and `extern fn` declarations keep the C name the runtime owns.
 
-Marking non-`main` functions `internal` would let `globaldce` remove them and would unlock `deadargelim` and `argpromotion`, which currently have nothing to work on. This is a real missed optimisation, not a correctness issue, and it is listed under Known gaps.
+This was not always so, and the difference is measurable. While every function was external, LLVM could not delete one even after inlining it into every caller: `all_paths_return.z` at `-O2` inlined and constant-folded all four helpers into `main` — seven `printf` calls with literal arguments — yet all four definitions survived as unreachable code. With internal linkage the same program emits **one** function.
+
+It became load-bearing in M6. The standard library is merged into every program, so without internal linkage each binary would carry all of `stdlib/string.z` whether or not it used a single function.
 
 ## Layout
 
 ```
-Include/        Headers — Token, AST, Lexer, Parser, Sema, CodeGen
+Include/        Headers — Token, AST, Lexer, Parser, Sema, CodeGen, Mangler
 Src/            Implementations + the driver (main.cpp)
+stdlib/         The standard library, written in Z and parsed at startup
 Runtime/        Everything linked into or lowered for compiled programs
   MLIR/         The `z` dialect and lowering pipeline (M17a+, opt-in)
 Test/           run_tests.sh + run_tests.ps1, parser/ codegen/ sema/ suites
@@ -338,9 +399,9 @@ Two invariants worth knowing before touching the middle of it:
 
 ## Known gaps
 
-- **Every function is emitted with `ExternalLinkage`**, so LLVM cannot delete one even after inlining it everywhere, and the interprocedural passes that depend on knowing all callers (`deadargelim`, `argpromotion`) have nothing to work on. Marking non-`main` functions `internal` in `genFnDecl` would fix this. See the LLVM IR optimisation section for a measured example.
 - `Include/Types.h` is empty and `TypeRef` is a flat enum in `AST.h`. It cannot represent parameterised types (`vector<int>`, `tensor<float, 2, 2>`) and will need to become a structured type before M11.
 - `int128` values print via truncation to 64 bits.
 - **Nothing is ever freed.** `z_gc_alloc` is a `malloc` wrapper, so every string concatenation and every boxed `dynamic` leaks. The `ZGCHeader` is already in place on both types so the M14 collector needs no layout change, but until then long-running programs grow without bound.
-- `z_string_cstr` relies on every `ZString` being allocated one byte longer than its length, with that byte left zero. This ends when M6 adds slices that alias a parent buffer — at that point the function has to copy.
+- `z_string_cstr` relies on every `ZString` being allocated one byte longer than its length, with that byte left zero. `slice` currently copies, so this holds; it ends when a slice is allowed to alias its parent buffer.
+- The `string` library omits `split`, `join` and `format`. `split`/`join` return `array<string>`, which does not exist until `structures` (M11); `format` needs varargs. `string(int)`-style constructors are spelled `from_int` / `from_bool` / `from_character` because overloading arrives in M16.
 - Strings are byte sequences, not Unicode-aware. Comparison is byte-wise lexicographic, `character` holds a code point but `print` emits it with `%c`, so non-ASCII code points do not round-trip yet.
