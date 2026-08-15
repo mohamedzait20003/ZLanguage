@@ -1,9 +1,9 @@
-namespace outer {
-    namespace inner {
+namespace a {
+    namespace b {
         fn f() -> int { return 1 }
     }
 }
 
 fn main() -> int {
-    return 0
+    return a.b.missing()
 }

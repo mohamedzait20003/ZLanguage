@@ -41,13 +41,24 @@ namespace ZCompiler {
         return program;
     }
 
+    std::string Parser::parseDottedName(const char* what) {
+        std::string path = expect(TokenType::Identifier, what).lexeme;
+
+        while (check(TokenType::Dot)) {
+            advance();
+            path += "." + expect(TokenType::Identifier, "expected a name after '.'").lexeme;
+        }
+
+        return path;
+    }
+
     UsingDecl Parser::parseUsingDecl() {
         const Token& kw = expect(TokenType::Using, "expected 'using'");
 
         UsingDecl decl;
         decl.line   = kw.line;
         decl.column = kw.column;
-        decl.name   = expect(TokenType::Identifier, "expected a namespace name after 'using'").lexeme;
+        decl.name   = parseDottedName("expected a namespace name after 'using'");
 
         if (check(TokenType::NewLine))
             advance();
@@ -55,13 +66,19 @@ namespace ZCompiler {
         return decl;
     }
 
-    DeclPtr Parser::parseNamespaceDecl() {
+    DeclPtr Parser::parseNamespaceDecl(const std::string& parentPath) {
         const Token& kw = expect(TokenType::Namespace, "expected 'namespace'");
 
-        auto decl = std::make_unique<NamespaceDecl>();
-        decl->line = kw.line;
+        const std::string leaf = expect(TokenType::Identifier, "expected a name after 'namespace'").lexeme;
+
+        // Nesting is carried in the fully qualified name, so `math.integral` is
+        // a namespace in its own right rather than a child that only exists
+        // relative to its parent. Sema keys everything on this dotted form,
+        // which is what lets `using math.integral` work without a tree walk.
+        auto decl    = std::make_unique<NamespaceDecl>();
+        decl->line   = kw.line;
         decl->column = kw.column;
-        decl->name = expect(TokenType::Identifier, "expected a name after 'namespace'").lexeme;
+        decl->name   = parentPath.empty() ? leaf : parentPath + "." + leaf;
 
         expect(TokenType::LBrace, "expected '{' to open the namespace body");
         skipNewlines();
@@ -70,15 +87,11 @@ namespace ZCompiler {
             if (check(TokenType::Fn)) {
                 decl->decls.push_back(parseFnDecl(decl->name));
             } else if (check(TokenType::Namespace)) {
-                const Token& t = peek();
-                throw std::runtime_error(
-                    "nested namespaces are not supported yet (M5) at line " +
-                    std::to_string(t.line) + ", column " + std::to_string(t.column)
-                );
+                decl->decls.push_back(parseNamespaceDecl(decl->name));
             } else {
                 const Token& t = peek();
                 throw std::runtime_error(
-                    "expected 'fn' inside namespace '" + decl->name + "' at line " +
+                    "expected 'fn' or 'namespace' inside namespace '" + decl->name + "' at line " +
                     std::to_string(t.line) + ", column " + std::to_string(t.column)
                 );
             }
@@ -652,23 +665,23 @@ namespace ZCompiler {
         std::string qualifier;
         std::string callee = first.lexeme;
 
-        if (check(TokenType::Dot)) {
+        // `a.b.c.fn(args)` — the final segment is the function, everything before
+        // it is the dotted namespace path. Any depth parses; whether the path
+        // actually names a namespace is Sema's question.
+        while (check(TokenType::Dot)) {
             advance();
-            qualifier = std::move(callee);
+
+            qualifier = qualifier.empty() ? callee : qualifier + "." + callee;
             callee = expect(TokenType::Identifier, "expected a name after '.'").lexeme;
-
-            if (check(TokenType::Dot))
-                throw std::runtime_error(
-                    "nested namespace access is not supported yet (M5) at line " +
-                    std::to_string(first.line) + ", column " + std::to_string(first.column)
-                );
-
-            if (!check(TokenType::LParen))
-                throw std::runtime_error(
-                    "'" + qualifier + "." + callee + "' must be a function call at line " +
-                    std::to_string(first.line) + ", column " + std::to_string(first.column)
-                );
         }
+
+        // Namespaces hold only functions, so a qualified name that is not
+        // called has nothing it could refer to.
+        if (!qualifier.empty() && !check(TokenType::LParen))
+            throw std::runtime_error(
+                "'" + qualifier + "." + callee + "' must be a function call at line " +
+                std::to_string(first.line) + ", column " + std::to_string(first.column)
+            );
 
         if (!check(TokenType::LParen)) {
             throw std::runtime_error(

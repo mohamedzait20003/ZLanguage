@@ -6,7 +6,7 @@ The full design, milestone breakdown, and architectural decisions live in [docs/
 
 ## Status
 
-Milestones **M0–M4** are complete. **M17a** (MLIR foundation) is partially landed.
+Milestones **M0–M5** are complete. **M17a** (MLIR foundation) is partially landed.
 
 | Milestone | Scope | State |
 |---|---|---|
@@ -15,12 +15,13 @@ Milestones **M0–M4** are complete. **M17a** (MLIR foundation) is partially lan
 | M2 | Functions, `if`/`else`, `while`, `for`, `do…along`, `switch`, `break`, `continue` | done |
 | M3 | Full type system — `string`, `dynamic`, `null`, ternary, casts | done |
 | M4 | Namespaces + `using` import | done |
-| M5 | Nested namespaces + dotted imports | next |
+| M5 | Nested namespaces + dotted imports | done |
+| M6 | `string` library | next |
 | M17a | MLIR foundation — `z` dialect, build integration | partial |
 
 M3 delivers the complete primitive set (`int`, `int32`, `int64`, `int128`, `float16`, `float`/`float32`, `double`/`float64`, `bool`, `character`, `string`, `dynamic`), the `null` value, the ternary operator, and both `static_cast<T>` and `dynamic_cast<T>`. `string` is a real runtime type — a heap `ZString` with `+` concatenation and all six comparison operators built in, no import required. `dynamic` boxes any primitive or string with a runtime type tag.
 
-M4 adds `namespace NAME { }` and `using NAME`. This is the mechanism the standard library will use from M6 onward — there is no separate compiler registry for built-in libraries, so `using math` will work exactly the way `using mylib` does for user code.
+M4–M5 add `namespace NAME { }` with nesting, and `using NAME` / `using A.B`. This is the mechanism the standard library will use from M6 onward — there is no separate compiler registry for built-in libraries, so `using math` will work exactly the way `using mylib` does for user code.
 
 M17a has the `z` dialect compiling and the build integration behind `-DZ_ENABLE_MLIR=ON`; the emitter and lowering pipeline are not yet written. See [docs/Plan.md](docs/Plan.md).
 
@@ -89,21 +90,49 @@ Statements are newline-terminated (no semicolons), declarations use `let name: t
 
 ### Namespaces
 
-`using` lines come first in a file, before any declaration. Several `namespace NAME { }` blocks with the same name merge, so a namespace can be assembled from more than one place. Qualified access `NAME.fn()` needs no import.
-
-Name resolution goes innermost-first: a function inside a namespace sees its own siblings, then file scope, then whatever was imported. An unqualified name reachable from two imports is **not** an error at the `using` line — it is an error only where it is used ambiguously, and qualifying the call resolves it:
+`using` lines come first in a file, before any declaration. Several `namespace NAME { }` blocks with the same name merge, so a namespace can be assembled from more than one place — including nested ones. Qualified access needs no import, at any depth.
 
 ```z
-using alpha
-using beta      # both export `sort` — fine on its own
+using math.integral        # targeted: just this sub-area
+using text                 # everything under `text`, nested included
+
+namespace math {
+    fn halve(x: int) -> int { return x / 2 }
+
+    namespace integral {
+        fn trapezoid(a: int, b: int) -> int { return (a + b) / 2 }
+    }
+
+    namespace stats {
+        namespace deep { fn buried() -> int { return 99 } }
+    }
+}
 
 fn main() -> int {
-    return alpha.sort()   # unambiguous
-    # return sort()       # error: 'sort' is ambiguous — qualify the call
+    print(trapezoid(2, 6))            # imported
+    print(math.halve(42))             # qualified — no import needed
+    print(math.stats.deep.buried())   # qualified, three levels
+    return 0
 }
 ```
 
-Namespace-scoped functions are emitted as `NS__name`, so `mymath.square` and `mygeom.square` coexist in one module. File-scope functions keep their plain name, which is what keeps `main` callable as `main`.
+**One import rule:** `using X` imports the symbols declared directly in `X` and in every namespace nested beneath it. So `using math` also brings in `math.integral` and `math.stats.deep`, while `using math.integral` brings in only that sub-area — `math`'s own symbols are not beneath it, which is what makes targeted imports useful.
+
+**Resolution is innermost-first:** a function inside a namespace sees its own siblings, then file scope, then whatever was imported. An inner namespace does *not* implicitly see its enclosing one; that needs a `using` or a qualifier.
+
+**Ambiguity is reported where it happens, not at the import.** A name reachable from two imports is fine until it is used unqualified:
+
+```z
+using math.stats
+using mylib.stats    # both export `mean` — fine on its own
+
+fn main() -> int {
+    return math.stats.mean()   # unambiguous
+    # return mean()            # error: 'mean' is ambiguous — qualify the call
+}
+```
+
+Namespace-scoped functions are emitted as `NS__name`, one `__` per level: `math.stats.deep.buried` becomes `math__stats__deep__buried`. File-scope functions keep their plain name, which is what keeps `main` callable as `main`.
 
 ## Testing
 
@@ -134,7 +163,7 @@ Three suites, discovered by file layout — dropping in a `.z` file and its expe
 | `Test/codegen/` | `*.z` + `*.expected` | Compile, run, compare stdout — **once per optimisation level** |
 | `Test/sema/` | `*.z` + `*.expected-error` | Must **fail** to compile; diagnostic must contain the expected text |
 
-`Test/codegen/` holds both the per-milestone tour programs (`m0_hello.z` … `m4_namespaces.z`) and narrow regressions pinned to specific fixed bugs. The milestone programs are annotated and double as documentation; keeping them in the suite means they are executed on every run instead of rotting. `Test/sema/` is the larger half of the value: each case asserts a program is *rejected*, and with which message.
+`Test/codegen/` holds both the per-milestone tour programs (`m0_hello.z` … `m5_nested_namespaces.z`) and narrow regressions pinned to specific fixed bugs. The milestone programs are annotated and double as documentation; keeping them in the suite means they are executed on every run instead of rotting. `Test/sema/` is the larger half of the value: each case asserts a program is *rejected*, and with which message.
 
 Expected-error matching is a substring, not an exact match. That pins which diagnostic fired without turning every wording tweak into a failure. Output comparison strips `\r` so CRLF and LF platforms behave identically.
 

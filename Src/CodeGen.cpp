@@ -1,6 +1,8 @@
 #include "CodeGen.h"
 #include "Mangler.h"
 
+#include <functional>
+
 #include <stdexcept>
 #include <llvm/IR/Type.h>
 #include <llvm/IR/Function.h>
@@ -11,6 +13,19 @@
 
 namespace ZCompiler {
     CodeGen::CodeGen(const std::string& moduleName) : module_(std::make_unique<llvm::Module>(moduleName, ctx_)), builder_(ctx_) {}
+
+    // Visits every function in a namespace tree, at any nesting depth.
+    static void walkNamespace(const NamespaceDecl& ns, const std::function<void(const FnDecl&)>& visit) {
+        for (const auto& member : ns.decls) {
+            if (auto* nested = dynamic_cast<const NamespaceDecl*>(member.get())) {
+                walkNamespace(*nested, visit);
+                continue;
+            }
+
+            if (auto* fn = dynamic_cast<const FnDecl*>(member.get()))
+                visit(*fn);
+        }
+    }
 
     // Public method implementations
     void CodeGen::generate(const Program& program) {
@@ -32,12 +47,8 @@ namespace ZCompiler {
                 continue;
             }
 
-            if (auto* ns = dynamic_cast<const NamespaceDecl*>(decl.get())) {
-                for (const auto& member : ns->decls) {
-                    if (auto* fn = dynamic_cast<const FnDecl*>(member.get()))
-                        record(*fn);
-                }
-            }
+            if (auto* ns = dynamic_cast<const NamespaceDecl*>(decl.get()))
+                walkNamespace(*ns, record);
         }
 
         for (const auto& decl : program.decls) {
@@ -46,12 +57,8 @@ namespace ZCompiler {
                 continue;
             }
 
-            if (auto* ns = dynamic_cast<const NamespaceDecl*>(decl.get())) {
-                for (const auto& member : ns->decls) {
-                    if (auto* fn = dynamic_cast<const FnDecl*>(member.get()))
-                        genFnDecl(*fn);
-                }
-            }
+            if (auto* ns = dynamic_cast<const NamespaceDecl*>(decl.get()))
+                walkNamespace(*ns, [&](const FnDecl& fn) { genFnDecl(fn); });
         }
     }
 

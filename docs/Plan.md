@@ -885,6 +885,20 @@ namespace math {
 
 ### Milestone 5: Nested Namespaces + Dotted Imports
 
+**Status: complete.** One deliberate deviation from the rules below, plus two notes.
+
+**The import rule was made uniform.** As written, the rules are asymmetric: `using A` imports `A` *and every descendant*, while `using A.B` imports only `A.B` and explicitly does not recurse. That makes the behaviour of an import depend on how many dots it contains, which is impossible to state in one sentence and would surprise anyone who nests three levels deep. The implemented rule is:
+
+> `using X` imports the symbols declared directly in `X` and in every namespace nested beneath it.
+
+This subsumes both original rules and satisfies every test the milestone lists, because in each of them the dotted namespace is a leaf. `using math.integral` still does not bring in `math`'s own symbols — `math` is not beneath `math.integral` — which is the sub-area targeting the milestone is for. The one case where the two rules differ is `using a.b` where `a.b.c` exists; the uniform rule imports `a.b.c` too.
+
+Note also that the parenthetical "this is the C# behavior: `using System` pulls in everything under `System.*`" is not correct about C# — `using System;` there does *not* import `System.Collections`. Z is deliberately more aggressive; the tradeoff is that importing a large library brings a lot of names into scope, and qualified access remains the escape hatch.
+
+**No new AST node.** The rules call for a `NamespaceAccessExpr { path, name, args }`. `CallExpr::qualifier` from M4 already holds a namespace name, so it simply holds a dotted one now, and `NamespaceDecl::name` holds the fully qualified path rather than the leaf. This keeps one call node and one resolution path instead of two, and means every M4 mechanism — mangling, ambiguity reporting, sibling visibility — extended without change.
+
+**Sibling visibility follows nesting.** A function in `a.b` resolves unqualified names against `a.b` first (the M4 rule, now keyed on the dotted name). It does *not* implicitly see `a`'s symbols; those need `using a` or qualification. Whether an inner namespace should see its enclosing one is a real design question, deferred rather than decided by accident.
+
 **Add:** nested namespaces and dotted `using` imports — building directly on the flat namespace mechanism from M4. This milestone lifts the M4 restriction: `namespace A { namespace B { } }` is now valid. After M5, library authors can organize by sub-area and users can import just the sub-area they need without pulling the entire library into scope.
 
 **Nested namespace declaration:**

@@ -1,0 +1,23 @@
+# Pins the shape of nested namespace blocks, dotted using, and deep
+# qualified calls. Namespace names print fully qualified.
+
+using a.b
+
+namespace a {
+    fn top() -> int { return 1 }
+
+    namespace b {
+        fn mid() -> int { return 2 }
+
+        namespace c {
+            fn deep() -> int { return 3 }
+        }
+    }
+}
+
+fn main() -> int {
+    print(mid())
+    print(a.top())
+    print(a.b.c.deep())
+    return 0
+}

@@ -221,6 +221,24 @@ static void dumpFn(const ZCompiler::FnDecl& fn, int d) {
         dumpStmt(*stmt, d + 1);
 }
 
+// Namespaces nest, so the dump does too. The printed name is the fully
+// qualified dotted one, which is also the key Sema uses.
+static void dumpNamespace(const ZCompiler::NamespaceDecl& ns, int d) {
+    using namespace ZCompiler;
+
+    std::cout << indent(d) << "Namespace " << ns.name << "\n";
+
+    for (const auto& member : ns.decls) {
+        if (auto* nested = dynamic_cast<const NamespaceDecl*>(member.get())) {
+            dumpNamespace(*nested, d + 1);
+            continue;
+        }
+
+        if (auto* fn = dynamic_cast<const FnDecl*>(member.get()))
+            dumpFn(*fn, d + 1);
+    }
+}
+
 static void dumpProgram(const ZCompiler::Program& prog) {
     using namespace ZCompiler;
 
@@ -235,14 +253,8 @@ static void dumpProgram(const ZCompiler::Program& prog) {
             continue;
         }
 
-        if (auto* ns = dynamic_cast<const NamespaceDecl*>(decl.get())) {
-            std::cout << "  Namespace " << ns->name << "\n";
-
-            for (const auto& member : ns->decls) {
-                if (auto* fn = dynamic_cast<const FnDecl*>(member.get()))
-                    dumpFn(*fn, 2);
-            }
-        }
+        if (auto* ns = dynamic_cast<const NamespaceDecl*>(decl.get()))
+            dumpNamespace(*ns, 1);
     }
 }
 

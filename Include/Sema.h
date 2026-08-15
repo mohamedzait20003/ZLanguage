@@ -62,7 +62,9 @@ namespace ZCompiler {
         const FuncSig* resolveCall(CallExpr& call);
 
         void collectNamespaces(const Program& program);
+        void collectNamespace(const NamespaceDecl& ns);
         void applyUsings(const Program& program);
+        void checkNamespaceBodies(const NamespaceDecl& ns);
 
         // Checkers
         TypeRef resolveExpr(Expr& expr);

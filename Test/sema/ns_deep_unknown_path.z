@@ -1,0 +1,7 @@
+namespace a {
+    namespace b { fn f() -> int { return 1 } }
+}
+
+fn main() -> int {
+    return a.nosuch.f()
+}

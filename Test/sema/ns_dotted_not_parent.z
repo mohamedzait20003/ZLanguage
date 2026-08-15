@@ -1,0 +1,10 @@
+using math.integral
+
+namespace math {
+    fn halve(x: int) -> int { return x / 2 }
+    namespace integral { fn trapezoid() -> int { return 1 } }
+}
+
+fn main() -> int {
+    return halve(4)
+}

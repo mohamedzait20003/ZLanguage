@@ -1,0 +1,1 @@
+'mean' is ambiguous between namespaces 'math.stats' and 'mylib.stats' at line 13 — qualify the call

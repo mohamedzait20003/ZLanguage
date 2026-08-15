@@ -5,8 +5,12 @@ namespace ZCompiler {
         if (owner.empty())
             return name;
 
-        // Two underscores, matching the scheme the plan reserves for methods
-        // (`Class__method`) and constructors, so all three read alike.
-        return owner + "__" + name;
+        std::string mangled;
+        mangled.reserve(owner.size() + name.size() + 4);
+
+        for (char c : owner)
+            if (c == '.') mangled += "__"; else mangled += c;
+
+        return mangled + "__" + name;
     }
 }

@@ -1,0 +1,14 @@
+using math.stats
+using mylib.stats
+
+namespace math {
+    namespace stats { fn mean() -> int { return 1 } }
+}
+
+namespace mylib {
+    namespace stats { fn mean() -> int { return 2 } }
+}
+
+fn main() -> int {
+    return mean()
+}

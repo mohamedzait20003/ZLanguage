@@ -16,27 +16,51 @@ namespace ZCompiler {
         return sig;
     }
 
-    void Sema::collectNamespaces(const Program& program) {
-        for (const auto& decl : program.decls) {
-            auto* ns = dynamic_cast<NamespaceDecl*>(decl.get());
-            if (!ns)
+    // True when `candidate` is `prefix` itself or nested inside it. Compares on
+    // dot boundaries so `mathematics` is not treated as a child of `math`.
+    static bool isWithin(const std::string& candidate, const std::string& prefix) {
+        if (candidate == prefix)
+            return true;
+
+        return candidate.size() > prefix.size()
+            && candidate.compare(0, prefix.size(), prefix) == 0
+            && candidate[prefix.size()] == '.';
+    }
+
+    void Sema::collectNamespace(const NamespaceDecl& ns) {
+        // Registering the namespace even when it declares nothing directly means
+        // `using a` works for a namespace that only contains sub-namespaces.
+        auto& members = namespaces_[ns.name];
+
+        for (const auto& member : ns.decls) {
+            if (auto* nested = dynamic_cast<NamespaceDecl*>(member.get())) {
+                collectNamespace(*nested);
+                continue;
+            }
+
+            auto* fn = dynamic_cast<FnDecl*>(member.get());
+            if (!fn)
                 continue;
 
-            auto& members = namespaces_[ns->name];
+            // Without overloading (M16) a repeated name inside one namespace
+            // can only be a mistake.
+            if (members.count(fn->name))
+                throw std::runtime_error(
+                    "redeclaration of '" + fn->name + "' in namespace '" + ns.name
+                    + "' at line " + std::to_string(fn->line)
+                );
 
-            for (const auto& member : ns->decls) {
-                auto* fn = dynamic_cast<FnDecl*>(member.get());
-                if (!fn)
-                    continue;
+            members[fn->name] = signatureOf(*fn);
+        }
+    }
 
-                if (members.count(fn->name))
-                    throw std::runtime_error(
-                        "redeclaration of '" + fn->name + "' in namespace '" + ns->name
-                        + "' at line " + std::to_string(fn->line)
-                    );
-
-                members[fn->name] = signatureOf(*fn);
-            }
+    // Pass 0: every namespace and its members, keyed by fully qualified dotted
+    // name and merged across blocks. Runs before signatures so a namespace
+    // declared below its first use still resolves.
+    void Sema::collectNamespaces(const Program& program) {
+        for (const auto& decl : program.decls) {
+            if (auto* ns = dynamic_cast<NamespaceDecl*>(decl.get()))
+                collectNamespace(*ns);
         }
     }
 
@@ -75,12 +99,20 @@ namespace ZCompiler {
                 continue;
             }
 
-            if (auto* ns = dynamic_cast<NamespaceDecl*>(decl.get())) {
-                for (const auto& member : ns->decls) {
-                    if (auto* fn = dynamic_cast<FnDecl*>(member.get()))
-                        checkFnDecl(*fn);
-                }
+            if (auto* ns = dynamic_cast<NamespaceDecl*>(decl.get()))
+                checkNamespaceBodies(*ns);
+        }
+    }
+
+    void Sema::checkNamespaceBodies(const NamespaceDecl& ns) {
+        for (const auto& member : ns.decls) {
+            if (auto* nested = dynamic_cast<NamespaceDecl*>(member.get())) {
+                checkNamespaceBodies(*nested);
+                continue;
             }
+
+            if (auto* fn = dynamic_cast<FnDecl*>(member.get()))
+                checkFnDecl(*fn);
         }
     }
 
@@ -120,26 +152,34 @@ namespace ZCompiler {
         if (local != functions_.end())
             return &local->second;
 
+        // `using X` brings in X and everything nested beneath it, so the search
+        // covers each import and all its descendants.
         const FuncSig* found = nullptr;
         std::string foundIn;
 
-        for (const auto& nsName : imports_) {
-            auto ns = namespaces_.find(nsName);
-            if (ns == namespaces_.end())
-                continue;
+        for (const auto& imported : imports_) {
+            for (const auto& entry : namespaces_) {
+                if (!isWithin(entry.first, imported))
+                    continue;
 
-            auto fn = ns->second.find(call.callee);
-            if (fn == ns->second.end())
-                continue;
+                auto fn = entry.second.find(call.callee);
+                if (fn == entry.second.end())
+                    continue;
 
-            if (found)
-                throw std::runtime_error(
-                    "'" + call.callee + "' is ambiguous between namespaces '" + foundIn
-                    + "' and '" + nsName + "'" + where + " — qualify the call"
-                );
+                // The same namespace can be reached through two imports (`using
+                // a` and `using a.b`); that is not ambiguity, it is one symbol.
+                if (found && foundIn == entry.first)
+                    continue;
 
-            found = &fn->second;
-            foundIn = nsName;
+                if (found)
+                    throw std::runtime_error(
+                        "'" + call.callee + "' is ambiguous between namespaces '" + foundIn
+                        + "' and '" + entry.first + "'" + where + " — qualify the call"
+                    );
+
+                found = &fn->second;
+                foundIn = entry.first;
+            }
         }
 
         if (!found)

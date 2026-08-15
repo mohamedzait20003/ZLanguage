@@ -1,0 +1,26 @@
+Program
+  Using(a.b)
+  Namespace a
+    Fn top() -> int
+      Return
+        IntLit(1)
+    Namespace a.b
+      Fn mid() -> int
+        Return
+          IntLit(2)
+      Namespace a.b.c
+        Fn deep() -> int
+          Return
+            IntLit(3)
+  Fn main() -> int
+    ExprStmt
+      Call(print)
+        Call(mid)
+    ExprStmt
+      Call(print)
+        Call(a.top)
+    ExprStmt
+      Call(print)
+        Call(a.b.c.deep)
+    Return
+      IntLit(0)

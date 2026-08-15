@@ -1,0 +1,56 @@
+# Nested namespaces and dotted imports. Every level of nesting extends the
+# fully qualified name, so `math.stats.deep` is a namespace in its own right.
+
+using math.integral        # targeted: brings in only this sub-area
+using text                 # top-level: brings in `text` and everything under it
+
+namespace math {
+    fn halve(x: int) -> int { return x / 2 }
+
+    namespace integral {
+        fn trapezoid(a: int, b: int) -> int { return (a + b) / 2 }
+        fn simpson(a: int, b: int) -> int { return (a + b) / 3 }
+    }
+
+    namespace stats {
+        fn mean(a: int, b: int) -> int { return (a + b) / 2 }
+
+        namespace deep {
+            fn buried() -> int { return 99 }
+        }
+    }
+}
+
+# A second block contributes to an already-nested namespace.
+namespace math {
+    namespace integral {
+        fn midpoint(a: int, b: int) -> int { return (a + b) / 2 + 1 }
+    }
+}
+
+namespace text {
+    fn tag() -> string { return "text" }
+
+    namespace inner {
+        fn tag_inner() -> string { return "text.inner" }
+    }
+}
+
+fn main() -> int {
+    # `using math.integral` imports that namespace's own symbols
+    print(trapezoid(2, 6))              # 4
+    print(simpson(3, 6))                # 3
+    print(midpoint(2, 6))               # 5  — from the second block
+
+    # `using text` flattens: its own symbols and everything nested below
+    print(tag())                        # text
+    print(tag_inner())                  # text.inner
+
+    # qualified access needs no import, at any depth
+    print(math.halve(42))               # 21
+    print(math.stats.mean(4, 8))        # 6
+    print(math.stats.deep.buried())     # 99
+    print(math.integral.trapezoid(4, 8))# 6
+
+    return 0
+}
