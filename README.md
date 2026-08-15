@@ -51,7 +51,18 @@ This produces `build/zc`. If CMake complains that the cache was created in a dif
 
 **Why clang.** Either compiler builds `zc` cleanly and passes the whole suite — GCC was simply the MSYS2 UCRT64 default before the choice was made explicit. clang is preferred for three reasons that matter to this project specifically: `clangd` consumes `compile_commands.json` directly and gives far better editor support than a hand-maintained include path; its template and overload diagnostics are clearer in a codebase leaning on `dynamic_cast` dispatch and LLVM's templates; and ASan/UBSan are usable on Windows with clang but effectively not with MinGW GCC — which will matter once the garbage collector lands in M14. The `gcc` preset stays in CI range so neither path silently rots.
 
-**Whichever you use, `.vscode/c_cpp_properties.json` must name the same compiler.** IntelliSense queries `compilerPath` for its built-in system include paths; naming a compiler the build does not use produces phantom `cannot open source file <string>` errors across every file.
+### Editor setup
+
+`.vscode/c_cpp_properties.json` lists the toolchain's system include directories **explicitly**, and deliberately does *not* set `compileCommands`. That looks redundant next to `build/compile_commands.json`, so it is worth knowing why:
+
+- When `compileCommands` is set, the C/C++ extension **ignores `includePath` for any file in the database** and takes that file's configuration from the database entry alone. Those entries contain only `-IInclude` — a compiler never puts its built-in system paths on a command line — so the extension has to recover them by *querying* the compiler. When that query fails, IntelliSense ends up with no system includes at all and reports `cannot open source file "string"` on every file, while the real build succeeds.
+- Listing the paths in `includePath` with `**` globs (`include/c++/**`, `lib/clang/**`) removes the dependency on that query, and the globs survive toolchain upgrades — which matters, because a GCC 15 → 16 upgrade is what first broke this: libstdc++ lives in a version-numbered directory and the cached path pointed at one that no longer existed.
+
+If squiggles persist after editing this file, run **C/C++: Reset IntelliSense Database** from the command palette — the extension caches resolved paths and will keep serving stale ones.
+
+`compilerPath` and `intelliSenseMode` must still match the preset you build with (`clang++.exe` / `windows-clang-x64` for `clang`, `c++.exe` / `windows-gcc-x64` for `gcc`).
+
+**The permanent fix is clangd**, which reads `compile_commands.json` directly and needs none of this. Install the `llvm-vs-code-extensions.vscode-clangd` extension and disable the Microsoft extension's IntelliSense engine; the project already emits `compile_commands.json` on every configure.
 
 **Two environment traps worth knowing**, both of which produce failures that look like compiler bugs:
 
