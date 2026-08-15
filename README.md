@@ -23,23 +23,35 @@ M3 delivers the complete primitive set (`int`, `int32`, `int64`, `int128`, `floa
 
 M4–M5 add `namespace NAME { }` with nesting, and `using NAME` / `using A.B`. This is the mechanism the standard library will use from M6 onward — there is no separate compiler registry for built-in libraries, so `using math` will work exactly the way `using mylib` does for user code.
 
-M17a has the `z` dialect compiling and the build integration behind `-DZ_ENABLE_MLIR=ON`; the emitter and lowering pipeline are not yet written. See [docs/Plan.md](docs/Plan.md).
+M17a has the `z` dialect compiling and the build integration behind the `clang-mlir` preset; the emitter and lowering pipeline are not yet written. See [docs/Plan.md](docs/Plan.md).
 
 ## Building
 
-Requires **LLVM 22** development libraries, CMake 3.20+, and a C++17 compiler. The reference setup is MSYS2 UCRT64:
+Requires **LLVM 22** development libraries, CMake 3.21+ (for presets), and a C++17 compiler. The reference setup is MSYS2 UCRT64:
 
 ```bash
 pacman -Syu                                          # do this first — see below
-pacman -S mingw-w64-ucrt-x86_64-llvm mingw-w64-ucrt-x86_64-cmake mingw-w64-ucrt-x86_64-ninja
+pacman -S mingw-w64-ucrt-x86_64-llvm mingw-w64-ucrt-x86_64-clang mingw-w64-ucrt-x86_64-cmake mingw-w64-ucrt-x86_64-ninja
 ```
+
+Build through a preset, which pins the compiler rather than leaving it to whatever CMake happens to discover:
 
 ```bash
-cmake -S . -B build -G Ninja
-cmake --build build
+cmake --preset clang         # default: MSYS2 UCRT64 clang, into build/
+cmake --build --preset clang
 ```
 
-This produces `build/zc`. If CMake complains that the cache was created in a different directory, delete `build/` and re-run the configure step.
+| Preset | Compiler | Build dir | Notes |
+|---|---|---|---|
+| `clang` | clang 22 | `build/` | Default. What `.vscode/c_cpp_properties.json` is configured against. |
+| `clang-mlir` | clang 22 | `build/` | Adds the M17a `z` dialect (`Z_ENABLE_MLIR=ON`). |
+| `gcc` | GCC 16 | `build-gcc/` | Kept green so the project is not locked to one compiler. |
+
+This produces `build/zc`. If CMake complains that the cache was created in a different directory, delete `build/` and re-configure.
+
+**Why clang.** Either compiler builds `zc` cleanly and passes the whole suite — GCC was simply the MSYS2 UCRT64 default before the choice was made explicit. clang is preferred for three reasons that matter to this project specifically: `clangd` consumes `compile_commands.json` directly and gives far better editor support than a hand-maintained include path; its template and overload diagnostics are clearer in a codebase leaning on `dynamic_cast` dispatch and LLVM's templates; and ASan/UBSan are usable on Windows with clang but effectively not with MinGW GCC — which will matter once the garbage collector lands in M14. The `gcc` preset stays in CI range so neither path silently rots.
+
+**Whichever you use, `.vscode/c_cpp_properties.json` must name the same compiler.** IntelliSense queries `compilerPath` for its built-in system include paths; naming a compiler the build does not use produces phantom `cannot open source file <string>` errors across every file.
 
 **Two environment traps worth knowing**, both of which produce failures that look like compiler bugs:
 
@@ -48,7 +60,7 @@ This produces `build/zc`. If CMake complains that the cache was created in a dif
 
 CMake links the single shared `libLLVM` when the distribution provides one (MSYS2 sets `LLVM_LINK_LLVM_DYLIB=ON`) and falls back to static component libraries otherwise. The static path is a genuine fallback rather than a preference: linking ~70 static LLVM archives exhausts the BFD linker, which fails with a bare `ld returned 5 exit status` and no further explanation.
 
-> From M17 onward the tensor library adds an **MLIR** dependency, version-locked to LLVM — `MLIRConfig.cmake` does `find_package(LLVM ... EXACT)`, so the two must be the same version down to the patch. It is gated behind `-DZ_ENABLE_MLIR=ON` so everything below M17 builds without it. See the prerequisite section of [docs/Plan.md](docs/Plan.md).
+> From M17 onward the tensor library adds an **MLIR** dependency, version-locked to LLVM — `MLIRConfig.cmake` does `find_package(LLVM ... EXACT)`, so the two must be the same version down to the patch. It is gated behind the `clang-mlir` preset (`Z_ENABLE_MLIR=ON`) so everything below M17 builds without it. See the prerequisite section of [docs/Plan.md](docs/Plan.md).
 
 ## Usage
 

@@ -1,4 +1,4 @@
-/build
+/build*/
 /.vscode
 
 # Compiler output — `zc` emits <name>.exe plus the intermediate <name>.exe.o

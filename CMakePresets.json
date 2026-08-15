@@ -1,0 +1,53 @@
+{
+  "version": 3,
+  "cmakeMinimumRequired": { "major": 3, "minor": 21, "patch": 0 },
+
+  "configurePresets": [
+    {
+      "name": "base",
+      "hidden": true,
+      "generator": "Ninja",
+      "binaryDir": "${sourceDir}/build",
+      "cacheVariables": {
+        "CMAKE_EXPORT_COMPILE_COMMANDS": "ON"
+      }
+    },
+
+    {
+      "name": "clang",
+      "displayName": "Clang (default)",
+      "description": "MSYS2 UCRT64 clang. The compiler zc is built with, and the one .vscode/c_cpp_properties.json is configured against.",
+      "inherits": "base",
+      "cacheVariables": {
+        "CMAKE_C_COMPILER": "C:/msys64/ucrt64/bin/clang.exe",
+        "CMAKE_CXX_COMPILER": "C:/msys64/ucrt64/bin/clang++.exe"
+      }
+    },
+
+    {
+      "name": "clang-mlir",
+      "displayName": "Clang + MLIR tensor backend",
+      "description": "Adds the M17a `z` dialect. Requires a matching LLVM+MLIR pair.",
+      "inherits": "clang",
+      "cacheVariables": { "Z_ENABLE_MLIR": "ON" }
+    },
+
+    {
+      "name": "gcc",
+      "displayName": "GCC",
+      "description": "MSYS2 UCRT64 GCC. Kept working and tested so the project is not locked to one compiler.",
+      "inherits": "base",
+      "binaryDir": "${sourceDir}/build-gcc",
+      "cacheVariables": {
+        "CMAKE_C_COMPILER": "C:/msys64/ucrt64/bin/gcc.exe",
+        "CMAKE_CXX_COMPILER": "C:/msys64/ucrt64/bin/g++.exe"
+      }
+    }
+  ],
+
+  "buildPresets": [
+    { "name": "clang",      "configurePreset": "clang" },
+    { "name": "clang-mlir", "configurePreset": "clang-mlir" },
+    { "name": "gcc",        "configurePreset": "gcc" }
+  ]
+}
