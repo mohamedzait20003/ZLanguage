@@ -1,0 +1,6 @@
+using math
+
+fn main() -> int {
+    print(math.arctan(1.0))
+    return 0
+}

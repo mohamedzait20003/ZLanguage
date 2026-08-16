@@ -41,6 +41,22 @@ namespace ZCompiler {
             signatures_[fn.isExtern ? fn.name : mangleFunction(fn.owner, fn.name)] = std::move(sig);
         };
 
+        // Constants are folded at each use, so they only need to be findable —
+        // nothing is emitted for them.
+        std::function<void(const std::vector<DeclPtr>&)> collectConsts =
+            [&](const std::vector<DeclPtr>& decls) {
+                for (const auto& decl : decls) {
+                    if (auto* ns = dynamic_cast<const NamespaceDecl*>(decl.get())) {
+                        collectConsts(ns->decls);
+                        continue;
+                    }
+
+                    if (auto* konst = dynamic_cast<const ConstDecl*>(decl.get()))
+                        constants_[mangleFunction(konst->owner, konst->name)] = konst;
+                }
+            };
+        collectConsts(program.decls);
+
         auto forEachFn = [&](const std::function<void(const FnDecl&)>& visit) {
             for (const auto& decl : program.decls) {
                 if (auto* fn = dynamic_cast<const FnDecl*>(decl.get())) {
@@ -397,6 +413,13 @@ namespace ZCompiler {
         }
 
         if (auto* id = dynamic_cast<const IdentExpr*>(&expr)) {
+            if (!id->qualifier.empty() || !lookupVar(id->name)) {
+                auto konst = constants_.find(mangleFunction(id->qualifier, id->name));
+
+                if (konst != constants_.end())
+                    return convert(genExpr(*konst->second->value), konst->second->value->resolvedType, id->resolvedType);
+            }
+
             const VarBinding* binding = lookupVar(id->name);
             if (!binding)
                 throw std::runtime_error("use of undeclared variable '" + id->name + "'");

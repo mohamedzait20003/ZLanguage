@@ -1080,6 +1080,16 @@ fn main() -> int {
 
 ### Milestone 7: `math` Library
 
+**Status: complete.** The implementation notes below predate M4/M6 and describe a mechanism that no longer exists — they say to "add `math` to the compiler's library registry" and have "CodeGen declare libm functions on first use". There is no registry: M4 replaced it with namespaces and M6 established the self-hosted pattern. `stdlib/math.z` is Z source declaring each libm entry point with `extern fn`, and the linker resolves them from the C runtime already linked into every program. The library contains no runtime code of its own, which is what made it a good smoke test.
+
+**Namespace constants were added to make `PI` a value.** The API here specifies `PI: double` and the test uses `PI * pow(r, 2.0)`, but the M4 stdlib sketch writes `fn PI() -> double`, and the two cannot both be right. A constant is the better answer — `PI()` puts a call in every arithmetic expression — so `let NAME: T = <literal>` outside a function body now declares an immutable named value, in a namespace or at file scope.
+
+The design point worth recording: **constants have no storage.** Every reference is replaced by the literal, so no global is emitted and `PI * r * r` costs nothing. That is why the initialiser is restricted to a literal (optionally negated); general constant folding is a separate feature and this milestone did not need it. Resolution follows the same innermost-first order as calls, and a local variable shadows a constant rather than the reverse.
+
+Two smaller consequences: a qualified name with no argument list (`math.PI`) now parses as a constant reference rather than being rejected, and naming a function without calling it gives a diagnostic that says so (`'a.f' is a function — add '()' to call it`) instead of reporting a missing constant.
+
+`abs`, `min` and `max` wrap `fabs`, `fmin` and `fmax`, keeping the C spelling out of the language surface.
+
 **Add:** the `math` standard library — the first real library, imported via `using math`. Chosen as the first library because it's backed entirely by libm calls and requires no custom runtime code, giving a clean smoke test of the library registry and external linkage.
 
 **API v1 (free functions, all `double`-precision):**

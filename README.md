@@ -6,7 +6,7 @@ The full design, milestone breakdown, and architectural decisions live in [docs/
 
 ## Status
 
-Milestones **M0–M6** are complete. **M17a** (MLIR foundation) is partially landed.
+Milestones **M0–M7** are complete. **M17a** (MLIR foundation) is partially landed.
 
 | Milestone | Scope | State |
 |---|---|---|
@@ -17,7 +17,8 @@ Milestones **M0–M6** are complete. **M17a** (MLIR foundation) is partially lan
 | M4 | Namespaces + `using` import | done |
 | M5 | Nested namespaces + dotted imports | done |
 | M6 | `string` library — first self-hosted stdlib | done |
-| M7 | `math` library | next |
+| M7 | `math` library + namespace constants | done |
+| M8 | `datetime` library | next |
 | M17a | MLIR foundation — `z` dialect, build integration | partial |
 
 M3 delivers the complete primitive set (`int`, `int32`, `int64`, `int128`, `float16`, `float`/`float32`, `double`/`float64`, `bool`, `character`, `string`, `dynamic`), the `null` value, the ternary operator, and both `static_cast<T>` and `dynamic_cast<T>`. `string` is a real runtime type — a heap `ZString` with `+` concatenation and all six comparison operators built in, no import required. `dynamic` boxes any primitive or string with a runtime type tag.
@@ -25,6 +26,8 @@ M3 delivers the complete primitive set (`int`, `int32`, `int64`, `int128`, `floa
 M4–M5 add `namespace NAME { }` with nesting, and `using NAME` / `using A.B`.
 
 M6 is the first library to use that mechanism. `stdlib/string.z` is ordinary Z source defining `namespace string { }`, pre-parsed by the compiler and merged into the program, so `using string` resolves exactly the way `using mylib` does for user code — there is no compiler registry of built-in libraries. It also adds `extern fn`, which is how Z declares a function implemented in the C runtime.
+
+M7 adds `math`, which needs no runtime code at all — every function binds straight to libm through `extern fn`. It also adds **namespace constants** (`let PI: double = 3.14159…`), folded into each use rather than stored.
 
 M17a has the `z` dialect compiling and the build integration behind the `clang-mlir` preset; the emitter and lowering pipeline are not yet written. See [docs/Plan.md](docs/Plan.md).
 
@@ -214,6 +217,44 @@ namespace string {
 ```
 
 `extern fn` is a declaration with no body whose symbol is never mangled, so it binds to the C definition in `Runtime/String/`. It is the general mechanism for reaching the runtime, and `math` (M7) and `datetime` (M8) will use it to reach libm and `<time.h>`.
+
+### The `math` library
+
+Double-precision free functions backed entirely by libm, plus `PI` and `E`.
+
+```z
+using math
+
+fn area(r: double) -> double {
+    return PI * pow(r, 2.0)
+}
+
+fn main() -> int {
+    print(area(2.0))            # 12.566371
+    print(sqrt(16))             # 4.000000 — int widens implicitly
+    print(math.max(3.0, 7.0))   # qualified, no import needed
+    return 0
+}
+```
+
+`sqrt` `pow` `exp` `log` `sin` `cos` `tan` `floor` `ceil` `abs` `min` `max`, and the constants `PI` and `E`.
+
+Everything is `double`. Integer arguments widen implicitly, so `sqrt(16)` needs no cast; an integer *result* needs `static_cast<int>(...)` until overloading (M16) allows genuine integer versions of `abs`/`min`/`max`.
+
+`stdlib/math.z` contains no runtime code — `extern fn` binds each name directly to the C symbol, and `abs`/`min`/`max` are thin wrappers because C spells the double versions `fabs`/`fmin`/`fmax`.
+
+### Constants
+
+A `let` outside any function body declares an immutable named value, in a namespace or at file scope:
+
+```z
+namespace physics {
+    let C: double = 299792458.0
+    let NAME: string = "SI"
+}
+```
+
+There is no storage: every reference is replaced by the literal, so `PI * r * r` costs nothing at runtime and no global is emitted. The initialiser must therefore be a literal (optionally negated) — general constant folding is a separate feature. A local variable of the same name shadows a constant, never the reverse, and a constant is reached unqualified via `using` or qualified as `physics.C` without one.
 
 ## Testing
 

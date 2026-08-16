@@ -28,8 +28,14 @@ namespace ZCompiler {
 
         // File-scope functions, keyed by plain name.
         std::unordered_map<std::string, FuncSig> functions_;
-        std::unordered_map<std::string, std::unordered_map<std::string, FuncSig>> namespaces_;
 
+        // Namespace constants: namespace -> name -> declared type. Constants and
+        // functions live in separate tables because they are looked up from
+        // different syntactic positions and can share a name harmlessly.
+        std::unordered_map<std::string, TypeRef> fileConsts_;
+        std::unordered_map<std::string, std::unordered_map<std::string, FuncSig>> namespaces_;
+        std::unordered_map<std::string, std::unordered_map<std::string, TypeRef>> namespaceConsts_;
+        
         std::vector<std::string> imports_;
         std::vector<Ctx> contextStack_;
 
@@ -64,10 +70,17 @@ namespace ZCompiler {
 
         const FuncSig* resolveCall(CallExpr& call);
 
+        // Resolves a bare or qualified name to a constant, applying the same
+        // innermost-first order as calls. Returns false when it is not a
+        // constant at all, so locals keep priority.
+        bool resolveConst(IdentExpr& ident, TypeRef& out) const;
+
         void collectNamespaces(const Program& program);
         void collectNamespace(const NamespaceDecl& ns);
         void applyUsings(const Program& program);
         void checkNamespaceBodies(const NamespaceDecl& ns);
+        void checkConstDecls(const std::vector<DeclPtr>& decls);
+        static bool isConstantExpr(const Expr& expr);
 
         // Checkers
         TypeRef resolveExpr(Expr& expr);

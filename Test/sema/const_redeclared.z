@@ -1,0 +1,8 @@
+namespace cfg {
+    let VALUE: int = 1
+    let VALUE: int = 2
+}
+
+fn main() -> int {
+    return cfg.VALUE
+}

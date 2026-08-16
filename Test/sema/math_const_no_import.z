@@ -1,0 +1,4 @@
+fn main() -> int {
+    print(PI)
+    return 0
+}

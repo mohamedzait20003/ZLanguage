@@ -54,6 +54,7 @@ namespace ZCompiler {
 
 
             std::unordered_map<std::string, llvm::Constant*> stringLiterals_;
+            std::unordered_map<std::string, const ConstDecl*> constants_;
 
             llvm::Type* llvmType(TypeRef type);
             llvm::StructType* zstringType();

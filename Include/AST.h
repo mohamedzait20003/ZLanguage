@@ -86,6 +86,7 @@ namespace ZCompiler {
     };
 
     struct IdentExpr : Expr {
+        std::string qualifier;
         std::string name;
     };
 
@@ -195,6 +196,18 @@ namespace ZCompiler {
 
         std::string owner;
         bool isExtern = false;
+    };
+
+    // `let NAME: T = <literal>` at namespace or file scope — an immutable
+    // named value, not a variable. There is no storage: every reference is
+    // replaced by the literal, which is why the initialiser must be constant.
+    struct ConstDecl : Decl {
+        std::string name;
+        TypeRef type = TypeRef::Int;
+        ExprPtr value;
+
+        // Namespace it was declared in, empty at file scope.
+        std::string owner;
     };
 
     // `namespace NAME { ... }`. Several blocks with the same name merge, so this

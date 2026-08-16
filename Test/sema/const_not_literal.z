@@ -1,0 +1,8 @@
+namespace cfg {
+    fn compute() -> int { return 1 }
+    let VALUE: int = compute()
+}
+
+fn main() -> int {
+    return cfg.VALUE
+}

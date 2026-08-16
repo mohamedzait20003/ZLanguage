@@ -39,6 +39,19 @@ namespace ZCompiler {
                 continue;
             }
 
+            if (auto* konst = dynamic_cast<ConstDecl*>(member.get())) {
+                auto& consts = namespaceConsts_[ns.name];
+
+                if (consts.count(konst->name))
+                    throw std::runtime_error(
+                        "redeclaration of constant '" + konst->name + "' in namespace '" + ns.name
+                        + "' at line " + std::to_string(konst->line)
+                    );
+
+                consts[konst->name] = konst->type;
+                continue;
+            }
+
             auto* fn = dynamic_cast<FnDecl*>(member.get());
             if (!fn)
                 continue;
@@ -87,11 +100,20 @@ namespace ZCompiler {
         collectNamespaces(program);
         applyUsings(program);
 
-        // Pass 1: file-scope signatures.
+        // Pass 1: file-scope signatures and constants.
         for (const auto& decl : program.decls) {
-            if (auto* fn = dynamic_cast<FnDecl*>(decl.get()))
+            if (auto* fn = dynamic_cast<FnDecl*>(decl.get())) {
                 functions_[fn->name] = signatureOf(*fn);
+                continue;
+            }
+
+            if (auto* konst = dynamic_cast<ConstDecl*>(decl.get()))
+                fileConsts_[konst->name] = konst->type;
         }
+
+        // Constant initialisers are checked before any body, so a function can
+        // reference a constant declared after it.
+        checkConstDecls(program.decls);
 
         // Pass 2: bodies, file scope first, then every namespace member.
         for (const auto& decl : program.decls) {
@@ -103,6 +125,110 @@ namespace ZCompiler {
             if (auto* ns = dynamic_cast<NamespaceDecl*>(decl.get()))
                 checkNamespaceBodies(*ns);
         }
+    }
+
+    // A constant's initialiser must be a compile-time value of the declared
+    // type. Restricting it to literals is what lets CodeGen inline every
+    // reference instead of allocating storage.
+    void Sema::checkConstDecls(const std::vector<DeclPtr>& decls) {
+        for (const auto& decl : decls) {
+            if (auto* ns = dynamic_cast<NamespaceDecl*>(decl.get())) {
+                checkConstDecls(ns->decls);
+                continue;
+            }
+
+            auto* konst = dynamic_cast<ConstDecl*>(decl.get());
+            if (!konst)
+                continue;
+
+            // Constness is checked before resolution: otherwise a call in the
+            // initialiser reports whatever went wrong resolving the call rather
+            // than the actual problem, which is that it is not a constant.
+            if (!isConstantExpr(*konst->value))
+                throw std::runtime_error(
+                    "constant '" + konst->name + "' must be initialised with a literal at line "
+                    + std::to_string(konst->line)
+                );
+
+            const TypeRef valueType = resolveExpr(*konst->value);
+
+            if (!canWiden(valueType, konst->type))
+                throw std::runtime_error(
+                    "cannot initialise constant '" + konst->name + "' of type '" + typeName(konst->type)
+                    + "' with a value of type '" + typeName(valueType)
+                    + "' at line " + std::to_string(konst->line)
+                );
+
+            konst->value->resolvedType = konst->type;
+        }
+    }
+
+    // Literals, and unary minus over one. Deliberately narrow: constant folding
+    // of arbitrary expressions is a separate feature.
+    bool Sema::isConstantExpr(const Expr& expr) {
+        if (dynamic_cast<const IntLitExpr*>(&expr) || dynamic_cast<const FloatLitExpr*>(&expr)
+            || dynamic_cast<const DoubleLitExpr*>(&expr) || dynamic_cast<const BoolLitExpr*>(&expr)
+            || dynamic_cast<const CharLitExpr*>(&expr) || dynamic_cast<const StringLitExpr*>(&expr))
+            return true;
+
+        if (auto* un = dynamic_cast<const UnaryExpr*>(&expr))
+            return un->op == "-" && isConstantExpr(*un->operand);
+
+        return false;
+    }
+
+    bool Sema::resolveConst(IdentExpr& ident, TypeRef& out) const {
+        if (!ident.qualifier.empty()) {
+            auto ns = namespaceConsts_.find(ident.qualifier);
+            if (ns == namespaceConsts_.end())
+                return false;
+
+            auto found = ns->second.find(ident.name);
+            if (found == ns->second.end())
+                return false;
+
+            out = found->second;
+            return true;
+        }
+
+        // Same innermost-first order as a call: enclosing namespace, then file
+        // scope, then imports.
+        if (!currentNamespace_.empty()) {
+            auto ns = namespaceConsts_.find(currentNamespace_);
+
+            if (ns != namespaceConsts_.end()) {
+                auto found = ns->second.find(ident.name);
+
+                if (found != ns->second.end()) {
+                    ident.qualifier = currentNamespace_;
+                    out = found->second;
+                    return true;
+                }
+            }
+        }
+
+        auto local = fileConsts_.find(ident.name);
+        if (local != fileConsts_.end()) {
+            out = local->second;
+            return true;
+        }
+
+        for (const auto& imported : imports_) {
+            for (const auto& entry : namespaceConsts_) {
+                if (!isWithin(entry.first, imported))
+                    continue;
+
+                auto found = entry.second.find(ident.name);
+                if (found == entry.second.end())
+                    continue;
+
+                ident.qualifier = entry.first;
+                out = found->second;
+                return true;
+            }
+        }
+
+        return false;
     }
 
     void Sema::checkNamespaceBodies(const NamespaceDecl& ns) {
@@ -548,8 +674,41 @@ namespace ZCompiler {
         if (auto* nlit = dynamic_cast<NullLitExpr*>(&expr))
             return expr.resolvedType = TypeRef::Null;
 
-        if (auto* id = dynamic_cast<IdentExpr*>(&expr))
+        if (auto* id = dynamic_cast<IdentExpr*>(&expr)) {
+            // A qualified name can only be a constant; an unqualified one is a
+            // local first, so a constant never shadows a variable.
+            if (id->qualifier.empty()) {
+                for (auto it = scopes_.rbegin(); it != scopes_.rend(); ++it) {
+                    auto found = it->find(id->name);
+
+                    if (found != it->end())
+                        return expr.resolvedType = found->second;
+                }
+            }
+
+            TypeRef constType;
+            if (resolveConst(*id, constType))
+                return expr.resolvedType = constType;
+
+            if (!id->qualifier.empty()) {
+                // Naming a function without calling it is the likely mistake, so
+                // say that rather than reporting a missing constant.
+                auto ns = namespaces_.find(id->qualifier);
+
+                if (ns != namespaces_.end() && ns->second.count(id->name))
+                    throw std::runtime_error(
+                        "'" + id->qualifier + "." + id->name + "' is a function — add '()' to call it, at line "
+                        + std::to_string(id->line)
+                    );
+
+                throw std::runtime_error(
+                    "namespace '" + id->qualifier + "' has no constant '" + id->name
+                    + "' at line " + std::to_string(id->line)
+                );
+            }
+
             return expr.resolvedType = lookup(id->name, id->line, id->column);
+        }
 
         if (auto *un = dynamic_cast<UnaryExpr*>(&expr)) {
             TypeRef opType = resolveExpr(*un->operand);

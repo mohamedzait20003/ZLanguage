@@ -19,6 +19,8 @@ namespace ZCompiler {
         while (!check(TokenType::Eof)) {
             if (check(TokenType::Fn) || check(TokenType::Extern)) {
                 program.decls.push_back(parseFnDecl());
+            } else if (check(TokenType::Let)) {
+                program.decls.push_back(parseConstDecl());
             } else if (check(TokenType::Namespace)) {
                 program.decls.push_back(parseNamespaceDecl());
             } else if (check(TokenType::Using)) {
@@ -30,7 +32,7 @@ namespace ZCompiler {
             } else {
                 const Token& t = peek();
                 throw std::runtime_error(
-                    "expected 'fn', 'extern fn' or 'namespace' at top level at line " + std::to_string(t.line) +
+                    "expected 'fn', 'extern fn', 'let' or 'namespace' at top level at line " + std::to_string(t.line) +
                     ", column " + std::to_string(t.column)
                 );
             }
@@ -123,12 +125,14 @@ namespace ZCompiler {
         while (!check(TokenType::RBrace) && !check(TokenType::Eof)) {
             if (check(TokenType::Fn) || check(TokenType::Extern)) {
                 decl->decls.push_back(parseFnDecl(decl->name));
+            } else if (check(TokenType::Let)) {
+                decl->decls.push_back(parseConstDecl(decl->name));
             } else if (check(TokenType::Namespace)) {
                 decl->decls.push_back(parseNamespaceDecl(decl->name));
             } else {
                 const Token& t = peek();
                 throw std::runtime_error(
-                    "expected 'fn' or 'namespace' inside namespace '" + decl->name + "' at line " +
+                    "expected 'fn', 'let' or 'namespace' inside namespace '" + decl->name + "' at line " +
                     std::to_string(t.line) + ", column " + std::to_string(t.column)
                 );
             }
@@ -233,6 +237,30 @@ namespace ZCompiler {
 
         expect(TokenType::RBrace, "expected '}' to end block");
         return block;
+    }
+
+    // `let NAME: T = <literal>` outside any function body is a constant, not a
+    // variable: there is no storage and no assignment. The initialiser is
+    // restricted to a literal so every reference can be replaced by its value.
+    DeclPtr Parser::parseConstDecl(const std::string& owner) {
+        const Token& letTok = expect(TokenType::Let, "expected 'let'");
+
+        auto decl    = std::make_unique<ConstDecl>();
+        decl->owner  = owner;
+        decl->line   = letTok.line;
+        decl->column = letTok.column;
+        decl->name   = takeName("expected a constant name after 'let'");
+
+        expect(TokenType::Colon, "expected ':' after constant name");
+        decl->type = parseTypeRef();
+        expect(TokenType::Eq, "expected '=' after constant type");
+
+        decl->value = parseExpr();
+
+        if (check(TokenType::NewLine))
+            advance();
+
+        return decl;
     }
 
     DeclPtr Parser::parseFnDecl(const std::string& owner) {
@@ -732,13 +760,16 @@ namespace ZCompiler {
             callee = takeName("expected a name after '.'");
         }
 
-        // Namespaces hold only functions, so a qualified name that is not
-        // called has nothing it could refer to.
-        if (!qualifier.empty() && !check(TokenType::LParen))
-            throw std::runtime_error(
-                "'" + qualifier + "." + callee + "' must be a function call at line " +
-                std::to_string(first.line) + ", column " + std::to_string(first.column)
-            );
+        // A qualified name with no argument list is a namespace constant —
+        // namespaces hold functions and constants, and only the former are called.
+        if (!qualifier.empty() && !check(TokenType::LParen)) {
+            auto expr       = std::make_unique<IdentExpr>();
+            expr->line      = first.line;
+            expr->column    = first.column;
+            expr->qualifier = std::move(qualifier);
+            expr->name      = std::move(callee);
+            return expr;
+        }
 
         if (!check(TokenType::LParen)) {
             throw std::runtime_error(

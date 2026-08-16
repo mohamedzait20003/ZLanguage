@@ -1,0 +1,7 @@
+namespace cfg {
+    let NAME: int = "not an int"
+}
+
+fn main() -> int {
+    return cfg.NAME
+}

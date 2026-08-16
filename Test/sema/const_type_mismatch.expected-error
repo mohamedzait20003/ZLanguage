@@ -1,0 +1,1 @@
+cannot initialise constant 'NAME' of type 'int' with a value of type 'string' at line 2

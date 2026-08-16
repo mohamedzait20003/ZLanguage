@@ -1,0 +1,65 @@
+# The `math` library: double-precision free functions backed directly by libm,
+# plus PI and E as namespace constants.
+#
+# Values are chosen to be exactly representable where possible, so the expected
+# output does not depend on the last bit of a transcendental result.
+
+using math
+
+fn area(r: double) -> double {
+    return PI * pow(r, 2.0)
+}
+
+fn hypotenuse(a: double, b: double) -> double {
+    return sqrt(a * a + b * b)
+}
+
+fn main() -> int {
+    # --- powers and roots ---
+    print(sqrt(16.0))           # 4.000000
+    print(sqrt(2.0))            # 1.414214
+    print(pow(2.0, 10.0))       # 1024.000000
+    print(pow(9.0, 0.5))        # 3.000000
+
+    # --- exponential and logarithm ---
+    print(exp(0.0))             # 1.000000
+    print(log(1.0))             # 0.000000
+
+    # --- trigonometry ---
+    print(sin(0.0))             # 0.000000
+    print(cos(0.0))             # 1.000000
+    print(tan(0.0))             # 0.000000
+
+    # --- rounding ---
+    print(floor(3.7))           # 3.000000
+    print(ceil(3.2))            # 4.000000
+    print(floor(-3.2))          # -4.000000  toward negative infinity
+    print(ceil(-3.7))           # -3.000000
+
+    # --- abs / min / max, wrapping fabs / fmin / fmax ---
+    print(abs(-2.5))            # 2.500000
+    print(abs(2.5))             # 2.500000
+    print(min(3.0, 7.0))        # 3.000000
+    print(max(3.0, 7.0))        # 7.000000
+    print(min(-3.0, -7.0))      # -7.000000
+
+    # --- constants, folded at each use ---
+    print(PI)                   # 3.141593
+    print(E)                    # 2.718282
+    print(math.PI)              # qualified
+    print(PI > 3.0)             # 1
+
+    # --- integer arguments widen implicitly ---
+    print(sqrt(16))             # 4.000000
+    print(max(1, 2))            # 2.000000
+
+    # --- composition ---
+    print(area(2.0))            # 12.566371
+    print(hypotenuse(3.0, 4.0)) # 5.000000
+    print(static_cast<int>(floor(area(1.0))))   # 3
+
+    # --- qualified access needs no import ---
+    print(math.sqrt(25.0))      # 5.000000
+
+    return 0
+}

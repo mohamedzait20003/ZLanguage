@@ -1,0 +1,4 @@
+fn main() -> int {
+    print(sqrt(16.0))
+    return 0
+}

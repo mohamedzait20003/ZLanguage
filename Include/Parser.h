@@ -30,6 +30,7 @@ namespace ZCompiler {
 
             DeclPtr parseNamespaceDecl(const std::string& parentPath = "");
             DeclPtr parseFnDecl(const std::string& owner = "");
+            DeclPtr parseConstDecl(const std::string& owner = "");
 
 
             std::string parseDottedName(const char* what);

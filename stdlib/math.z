@@ -1,0 +1,57 @@
+# stdlib/math.z — the `math` standard library (M7).
+#
+# Every function is `double`-precision and backed directly by libm, which is why
+# this library needs no runtime code of its own: `extern fn` binds straight to
+# the C symbol and CodeGen emits a direct call.
+#
+# Integer arguments widen implicitly (`sqrt(16)` is `sqrt(16.0)`), so the
+# double-only API is usable from integer code without casts. Genuine integer
+# overloads of abs/min/max wait for overloading in M16 — until then, an integer
+# result needs `static_cast<int>(...)`.
+
+namespace math {
+    # libm. These bind to the C names directly: an `extern fn` symbol is never
+    # mangled, and the linker resolves them from the C runtime already linked
+    # into every Z program.
+    extern fn sqrt(x: double) -> double
+    extern fn pow(x: double, y: double) -> double
+    extern fn exp(x: double) -> double
+    extern fn log(x: double) -> double
+    extern fn sin(x: double) -> double
+    extern fn cos(x: double) -> double
+    extern fn tan(x: double) -> double
+    extern fn floor(x: double) -> double
+    extern fn ceil(x: double) -> double
+
+    # Named differently in C than in Z, so these are wrapped below rather than
+    # exposed directly.
+    extern fn fabs(x: double) -> double
+    extern fn fmin(a: double, b: double) -> double
+    extern fn fmax(a: double, b: double) -> double
+
+    # --- constants ------------------------------------------------------------
+    #
+    # Folded into each use rather than stored, so `PI * r * r` costs nothing at
+    # runtime. Written to more digits than a double can hold; the compiler keeps
+    # the nearest representable value.
+
+    let PI: double = 3.14159265358979323846
+    let E:  double = 2.71828182845904523536
+
+    # --- wrappers -------------------------------------------------------------
+    #
+    # `abs`, `min` and `max` are the names Z uses; C spells the double versions
+    # fabs/fmin/fmax. Wrapping keeps the C name out of the language surface.
+
+    fn abs(x: double) -> double {
+        return fabs(x)
+    }
+
+    fn min(a: double, b: double) -> double {
+        return fmin(a, b)
+    }
+
+    fn max(a: double, b: double) -> double {
+        return fmax(a, b)
+    }
+}
